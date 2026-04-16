@@ -271,17 +271,17 @@ class _SwipeScreenState extends State<SwipeScreen> {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
-                  _CircleAction(
-                    color: Colors.orange.shade700,
-                    icon: Icons.close,
+                  _NeonCircleAction(
+                    accent: const Color(0xFFFF3AD4),
+                    icon: Icons.close_rounded,
                     label: 'Pass',
                     onPressed: _deck.isEmpty
                         ? null
                         : () => _swiperController.swipe(CardSwiperDirection.left),
                   ),
-                  _CircleAction(
-                    color: Colors.green.shade600,
-                    icon: Icons.favorite,
+                  _NeonCircleAction(
+                    accent: const Color(0xFF39FF14),
+                    icon: Icons.favorite_rounded,
                     label: 'Like',
                     onPressed: _deck.isEmpty
                         ? null
@@ -364,7 +364,7 @@ class _SwiperProfileCard extends StatelessWidget {
           left: 20,
           child: _Stamp(
             label: 'PASS',
-            color: Colors.orange.shade800,
+            color: const Color(0xFFFF3AD4),
             opacity: passOpacity,
           ),
         ),
@@ -373,7 +373,7 @@ class _SwiperProfileCard extends StatelessWidget {
           right: 20,
           child: _Stamp(
             label: 'LIKE',
-            color: Colors.green.shade600,
+            color: const Color(0xFF39FF14),
             opacity: likeOpacity,
           ),
         ),
@@ -516,38 +516,68 @@ class _ProfileCardFrame extends StatelessWidget {
   }
 }
 
-class _CircleAction extends StatelessWidget {
-  const _CircleAction({
-    required this.color,
+class _NeonCircleAction extends StatelessWidget {
+  const _NeonCircleAction({
+    required this.accent,
     required this.icon,
     required this.label,
     required this.onPressed,
   });
 
-  final Color color;
+  final Color accent;
   final IconData icon;
   final String label;
   final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final enabled = onPressed != null;
+    final isDark = theme.brightness == Brightness.dark;
+    final labelColor = enabled ? accent : theme.colorScheme.onSurfaceVariant;
+
+    final button = DecoratedBox(
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: enabled
+            ? theme.colorScheme.surfaceContainerHighest.withValues(alpha: isDark ? 0.5 : 0.75)
+            : theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
+        border: Border.all(
+          color: accent.withValues(alpha: enabled ? 1 : 0.3),
+          width: 2,
+        ),
+      ),
+      child: Material(
+        type: MaterialType.transparency,
+        color: Colors.transparent,
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          splashColor: accent.withValues(alpha: 0.2),
+          onTap: onPressed,
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Icon(icon, size: 36, color: enabled ? accent : accent.withValues(alpha: 0.35)),
+          ),
+        ),
+      ),
+    );
+
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Material(
-          color: color.withValues(alpha: 0.15),
-          shape: const CircleBorder(),
-          child: InkWell(
-            customBorder: const CircleBorder(),
-            onTap: onPressed,
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Icon(icon, size: 36, color: color),
-            ),
+        if (enabled)
+          button
+        else
+          Opacity(opacity: 0.45, child: button),
+        const SizedBox(height: 8),
+        Text(
+          label,
+          style: theme.textTheme.labelMedium?.copyWith(
+            color: labelColor,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0.4,
           ),
         ),
-        const SizedBox(height: 6),
-        Text(label, style: Theme.of(context).textTheme.labelMedium),
       ],
     );
   }

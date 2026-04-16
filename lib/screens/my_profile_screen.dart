@@ -5,23 +5,23 @@ import 'package:flutter/material.dart';
 import '../widgets/firebase_profile_image.dart';
 
 /// Signed-in user's Firestore profile: photos, bio, city, interests.
+///
+/// When [embeddedInShell] is true (e.g. main tab), no inner [Scaffold]/[AppBar] so the shell
+/// app bar is the only top bar.
 class MyProfileScreen extends StatelessWidget {
-  const MyProfileScreen({super.key});
+  const MyProfileScreen({super.key, this.embeddedInShell = false});
+
+  final bool embeddedInShell;
 
   @override
   Widget build(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
-      return const Scaffold(
-        body: Center(child: Text('Not signed in')),
-      );
+      const body = Center(child: Text('Not signed in'));
+      return embeddedInShell ? body : const Scaffold(body: body);
     }
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('My profile'),
-      ),
-      body: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+    final body = StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
         stream: FirebaseFirestore.instance.collection('users').doc(user.uid).snapshots(),
         builder: (context, snapshot) {
           if (snapshot.hasError) {
@@ -145,7 +145,16 @@ class MyProfileScreen extends StatelessWidget {
             ],
           );
         },
+      );
+
+    if (embeddedInShell) {
+      return body;
+    }
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('My profile'),
       ),
+      body: body,
     );
   }
 }

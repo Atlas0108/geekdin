@@ -7,7 +7,7 @@ import 'matches_screen.dart';
 import 'my_profile_screen.dart';
 import 'swipe_screen.dart';
 
-/// Bottom navigation: Swipe (default), Geekout, Matches, Chat.
+/// Bottom navigation: Swipe (default), Geekout, Matches, Chat, Profile.
 class MainShellScreen extends StatefulWidget {
   const MainShellScreen({super.key});
 
@@ -18,7 +18,7 @@ class MainShellScreen extends StatefulWidget {
 class _MainShellScreenState extends State<MainShellScreen> {
   int _index = 0;
 
-  static const _titles = ['Swipe', 'Geekout', 'Matches', 'Chat'];
+  static const _titles = ['Swipe', 'Geekout', 'Matches', 'Chat', 'Profile'];
 
   @override
   Widget build(BuildContext context) {
@@ -26,17 +26,6 @@ class _MainShellScreenState extends State<MainShellScreen> {
       appBar: AppBar(
         title: Text(_titles[_index]),
         actions: [
-          IconButton(
-            tooltip: 'My profile',
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) => const MyProfileScreen(),
-                ),
-              );
-            },
-            icon: const Icon(Icons.person_outline),
-          ),
           IconButton(
             tooltip: 'Sign out',
             onPressed: () => FirebaseAuth.instance.signOut(),
@@ -51,6 +40,7 @@ class _MainShellScreenState extends State<MainShellScreen> {
           GeekoutScreen(),
           MatchesScreen(),
           ChatScreen(),
+          MyProfileScreen(embeddedInShell: true),
         ],
       ),
       bottomNavigationBar: NavigationBar(
@@ -76,6 +66,11 @@ class _MainShellScreenState extends State<MainShellScreen> {
             icon: Icon(Icons.chat_bubble_outline),
             selectedIcon: Icon(Icons.chat_bubble),
             label: 'Chat',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.person_outline),
+            selectedIcon: Icon(Icons.person),
+            label: 'Profile',
           ),
         ],
       ),
