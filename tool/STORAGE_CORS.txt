@@ -1,0 +1,5 @@
+Optional: if you need fetch()/http to Storage from the browser (not needed for Image.network after the web fix), apply CORS to the bucket:
+
+  gsutil cors set tool/storage-cors.json gs://geekdin-f7049.firebasestorage.app
+
+Requires gcloud + gsutil and permission on the project.

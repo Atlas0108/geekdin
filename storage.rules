@@ -1,0 +1,15 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Image.network / browsers do not attach Firebase Auth; download URLs carry a token.
+    // Listing the bucket is still blocked; only GET by full URL works.
+    match /users/{userId}/profile_images/{fileName} {
+      allow read: if true;
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    match /samples/{userId}/{allPaths=**} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+  }
+}

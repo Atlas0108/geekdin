@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "385039552808",
+    "project_id": "geekdin-f7049",
+    "storage_bucket": "geekdin-f7049.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:385039552808:android:f9523cbd48cff5d3e4001d",
+        "android_client_info": {
+          "package_name": "com.example.geekdin"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBmq9Cv55mi30JI_EhrYYpByBMlxjthzxw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

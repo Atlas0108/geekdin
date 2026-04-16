@@ -1,0 +1,40 @@
+{
+  "functions": {
+    "source": "functions"
+  },
+  "firestore": {
+    "rules": "firestore.rules"
+  },
+  "storage": {
+    "rules": "storage.rules"
+  },
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "geekdin-f7049",
+          "appId": "1:385039552808:android:f9523cbd48cff5d3e4001d",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "ios": {
+        "default": {
+          "projectId": "geekdin-f7049",
+          "appId": "1:385039552808:ios:fcaa1897a4feb23be4001d",
+          "uploadDebugSymbols": false,
+          "fileOutput": "ios/Runner/GoogleService-Info.plist"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "geekdin-f7049",
+          "configurations": {
+            "android": "1:385039552808:android:f9523cbd48cff5d3e4001d",
+            "ios": "1:385039552808:ios:fcaa1897a4feb23be4001d",
+            "web": "1:385039552808:web:0474760cdf15c264e4001d"
+          }
+        }
+      }
+    }
+  }
+}
