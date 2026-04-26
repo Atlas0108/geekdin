@@ -62,8 +62,10 @@ class _SwipeScreenState extends State<SwipeScreen> {
           .get();
       final swiped = swipedSnap.docs.map((d) => d.id).toSet();
 
-      final usersSnap =
-          await FirebaseFirestore.instance.collection('users').limit(80).get();
+      final usersSnap = await FirebaseFirestore.instance
+          .collection('users')
+          .limit(80)
+          .get();
 
       final next = <DiscoverProfile>[];
       for (final doc in usersSnap.docs) {
@@ -154,10 +156,7 @@ class _SwipeScreenState extends State<SwipeScreen> {
         .doc(me)
         .collection('swipes')
         .doc(targetUid)
-        .set({
-      'liked': liked,
-      'at': FieldValue.serverTimestamp(),
-    });
+        .set({'liked': liked, 'at': FieldValue.serverTimestamp()});
   }
 
   /// Persists the swiped profile (index is stable until [onEnd] clears the deck).
@@ -179,7 +178,11 @@ class _SwipeScreenState extends State<SwipeScreen> {
     }
   }
 
-  bool _onSwipe(int previousIndex, int? currentIndex, CardSwiperDirection direction) {
+  bool _onSwipe(
+    int previousIndex,
+    int? currentIndex,
+    CardSwiperDirection direction,
+  ) {
     _activeSwipeDirection.value = null;
     final liked = direction == CardSwiperDirection.right;
     unawaited(_persistSwipe(previousIndex, liked));
@@ -187,7 +190,11 @@ class _SwipeScreenState extends State<SwipeScreen> {
   }
 
   // ignore: unused_element_parameter
-  bool _onUndo(int? previousIndex, int currentIndex, CardSwiperDirection direction) {
+  bool _onUndo(
+    int? previousIndex,
+    int currentIndex,
+    CardSwiperDirection direction,
+  ) {
     _activeSwipeDirection.value = null;
     return true;
   }
@@ -239,7 +246,11 @@ class _SwipeScreenState extends State<SwipeScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(Icons.inbox_outlined, size: 64, color: Theme.of(context).colorScheme.outline),
+              Icon(
+                Icons.inbox_outlined,
+                size: 64,
+                color: Theme.of(context).colorScheme.outline,
+              ),
               const SizedBox(height: 16),
               Text(
                 'No more profiles to show',
@@ -250,8 +261,8 @@ class _SwipeScreenState extends State<SwipeScreen> {
                 'Check back later or ask friends to join.',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
               ),
               const SizedBox(height: 24),
               FilledButton.tonal(
@@ -273,8 +284,10 @@ class _SwipeScreenState extends State<SwipeScreen> {
             numberOfCardsDisplayed: _deck.length == 1 ? 1 : 2,
             isLoop: false,
             padding: EdgeInsets.zero,
-            allowedSwipeDirection:
-                const AllowedSwipeDirection.symmetric(horizontal: true),
+            threshold: 100,
+            allowedSwipeDirection: const AllowedSwipeDirection.symmetric(
+              horizontal: true,
+            ),
             onSwipe: _onSwipe,
             onUndo: _onUndo,
             onEnd: _onDeckEnd,
@@ -329,9 +342,12 @@ class _SwipeScreenState extends State<SwipeScreen> {
                         child: _CircleAction(
                           accent: const Color(0xFFFF3AD4),
                           icon: Icons.close_rounded,
+                          swapColors: direction == -1,
                           onPressed: _deck.isEmpty
                               ? null
-                              : () => _swiperController.swipe(CardSwiperDirection.left),
+                              : () => _swiperController.swipe(
+                                  CardSwiperDirection.left,
+                                ),
                         ),
                       ),
                       _ScaleVisibility(
@@ -339,9 +355,12 @@ class _SwipeScreenState extends State<SwipeScreen> {
                         child: _CircleAction(
                           accent: const Color(0xFF39FF14),
                           icon: Icons.favorite_rounded,
+                          swapColors: direction == 1,
                           onPressed: _deck.isEmpty
                               ? null
-                              : () => _swiperController.swipe(CardSwiperDirection.right),
+                              : () => _swiperController.swipe(
+                                  CardSwiperDirection.right,
+                                ),
                         ),
                       ),
                     ],
@@ -372,9 +391,7 @@ class DiscoverProfile {
   final String? city;
 
   bool get hasPresentation =>
-      imageUrl != null &&
-      imageUrl!.isNotEmpty &&
-      displayName.trim().isNotEmpty;
+      imageUrl != null && imageUrl!.isNotEmpty && displayName.trim().isNotEmpty;
 
   static DiscoverProfile fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
     final data = doc.data() ?? {};
@@ -420,7 +437,7 @@ class _SwiperProfileCard extends StatelessWidget {
         ),
         Positioned(
           top: 24,
-          left: 20,
+          right: 20,
           child: _Stamp(
             label: 'PASS',
             color: const Color(0xFFFF3AD4),
@@ -429,7 +446,7 @@ class _SwiperProfileCard extends StatelessWidget {
         ),
         Positioned(
           top: 24,
-          right: 20,
+          left: 20,
           child: _Stamp(
             label: 'LIKE',
             color: const Color(0xFF39FF14),
@@ -511,7 +528,11 @@ class _ProfileCardFrame extends StatelessWidget {
             else
               ColoredBox(
                 color: theme.colorScheme.surfaceContainerHighest,
-                child: Icon(Icons.person, size: 80, color: theme.colorScheme.outline),
+                child: Icon(
+                  Icons.person,
+                  size: 80,
+                  color: theme.colorScheme.outline,
+                ),
               ),
             Positioned(
               left: 0,
@@ -547,8 +568,11 @@ class _ProfileCardFrame extends StatelessWidget {
                           profile.city!,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: Colors.white,
+                          style: const TextStyle(
+                            color: Color(0xFFFFFFFF),
+                            fontSize: 16,
+                            fontWeight: FontWeight.w500,
+                            height: 1.2,
                           ),
                         ),
                       ],
@@ -558,8 +582,11 @@ class _ProfileCardFrame extends StatelessWidget {
                           profile.bio,
                           maxLines: 3,
                           overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: Colors.white,
+                          style: const TextStyle(
+                            color: Color(0xFFFFFFFF),
+                            fontSize: 16,
+                            fontWeight: FontWeight.w500,
+                            height: 1.3,
                           ),
                         ),
                       ],
@@ -579,31 +606,54 @@ class _CircleAction extends StatelessWidget {
   const _CircleAction({
     required this.accent,
     required this.icon,
+    required this.swapColors,
     required this.onPressed,
   });
 
   final Color accent;
   final IconData icon;
+  final bool swapColors;
   final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final enabled = onPressed != null;
+    final baseColor = theme.colorScheme.surfaceContainer;
+    final inactiveBg = enabled
+        ? baseColor
+        : theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.8);
+    final activeBg = enabled ? accent : accent.withValues(alpha: 0.4);
+    final inactiveIcon = enabled ? accent : accent.withValues(alpha: 0.45);
+    final activeIcon = enabled
+        ? baseColor
+        : baseColor.withValues(alpha: 0.55);
 
-    return Material(
-      color: enabled ? accent : accent.withValues(alpha: 0.4),
-      shape: const CircleBorder(),
-      elevation: enabled ? 6 : 0,
-      shadowColor: Colors.black.withValues(alpha: 0.4),
-      child: InkWell(
-        customBorder: const CircleBorder(),
-        onTap: onPressed,
-        child: SizedBox(
-          width: 72,
-          height: 72,
-          child: Icon(icon, size: 36, color: Colors.white),
-        ),
-      ),
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(end: swapColors ? 1.0 : 0.0),
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeInOut,
+      builder: (context, t, _) {
+        return Material(
+          color: Color.lerp(inactiveBg, activeBg, t),
+          shape: const CircleBorder(),
+          elevation: enabled ? 6 : 0,
+          shadowColor: Colors.black.withValues(alpha: 0.4),
+          child: InkWell(
+            customBorder: const CircleBorder(),
+            onTap: onPressed,
+            child: SizedBox(
+              width: 72,
+              height: 72,
+              child: Icon(
+                icon,
+                size: 36,
+                color: Color.lerp(inactiveIcon, activeIcon, t),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -628,4 +678,3 @@ class _ScaleVisibility extends StatelessWidget {
     );
   }
 }
-
