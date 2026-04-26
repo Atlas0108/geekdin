@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
@@ -8,17 +9,14 @@ import 'package:image_picker/image_picker.dart';
 
 import '../services/geocoding_service.dart';
 import '../services/user_firestore.dart';
+import '../utils/us_date_text_input_formatter.dart';
 import '../widgets/firebase_profile_image.dart';
 
 const int _maxProfilePhotos = 6;
 
 /// Collects profile photos (Storage), city + coordinates, bio, and interests (Firestore).
 class ProfileSetupScreen extends StatefulWidget {
-  const ProfileSetupScreen({
-    required this.user,
-    this.initialData,
-    super.key,
-  });
+  const ProfileSetupScreen({required this.user, this.initialData, super.key});
 
   final User user;
   final Map<String, dynamic>? initialData;
@@ -28,6 +26,21 @@ class ProfileSetupScreen extends StatefulWidget {
 }
 
 class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
+  static const _genderOptions = <String, String>{
+    'woman': 'Woman',
+    'man': 'Man',
+    'non_binary': 'Non-binary',
+    'other': 'Other',
+  };
+  static const _genderPreferenceOptions = <String, String>{
+    'everyone': 'Everyone',
+    'women': 'Women',
+    'men': 'Men',
+    'non_binary': 'Non-binary',
+  };
+
+  final _displayNameController = TextEditingController();
+  final _birthdayController = TextEditingController();
   final _bioController = TextEditingController();
   final _cityController = TextEditingController();
   final _interestController = TextEditingController();
@@ -41,6 +54,13 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
   Timer? _cityDebounce;
   double? _latitude;
   double? _longitude;
+  DateTime? _birthdate;
+  String? _gender;
+  String _genderPreference = 'everyone';
+  RangeValues _ageRange = RangeValues(
+    UserFirestore.defaultAgeMinPreference.toDouble(),
+    UserFirestore.defaultAgeMaxPreference.toDouble(),
+  );
   bool _suppressCityListener = false;
   bool _saving = false;
   String? _errorMessage;
@@ -50,6 +70,10 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
     super.initState();
     final d = widget.initialData;
     if (d != null) {
+      final displayName = (d['displayName'] as String?)?.trim();
+      if (displayName != null && displayName.isNotEmpty) {
+        _displayNameController.text = displayName;
+      }
       final bio = (d['bio'] as String?)?.trim();
       if (bio != null && bio.isNotEmpty) {
         _bioController.text = bio;
@@ -63,6 +87,37 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
       if (lat is num && lng is num) {
         _latitude = lat.toDouble();
         _longitude = lng.toDouble();
+      }
+      final birthdate = d['birthdate'];
+      if (birthdate is Timestamp) {
+        final utc = birthdate.toDate().toUtc();
+        _birthdate = DateTime(utc.year, utc.month, utc.day);
+      } else if (birthdate is DateTime) {
+        _birthdate = birthdate;
+      }
+      if (_birthdate != null) {
+        _birthdayController.text = _formatBirthdate(_birthdate!);
+      }
+      final gender = (d['gender'] as String?)?.trim();
+      if (gender != null && _genderOptions.containsKey(gender)) {
+        _gender = gender;
+      }
+      final genderPreference = (d['genderPreference'] as String?)?.trim();
+      if (genderPreference != null &&
+          _genderPreferenceOptions.containsKey(genderPreference)) {
+        _genderPreference = genderPreference;
+      }
+      final agePref = d['agePreference'];
+      if (agePref is Map) {
+        final min = agePref['min'];
+        final max = agePref['max'];
+        if (min is num && max is num) {
+          final minV = min.toDouble().clamp(18, 100).toDouble();
+          final maxV = max.toDouble().clamp(18, 100).toDouble();
+          if (minV <= maxV) {
+            _ageRange = RangeValues(minV, maxV);
+          }
+        }
       }
       final raw = d['interests'];
       if (raw is List) {
@@ -118,6 +173,8 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
   void dispose() {
     _cityDebounce?.cancel();
     _cityController.removeListener(_onCityTextChanged);
+    _displayNameController.dispose();
+    _birthdayController.dispose();
     _bioController.dispose();
     _cityController.dispose();
     _interestController.dispose();
@@ -236,6 +293,29 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
     setState(() {
       _errorMessage = null;
     });
+    final displayName = _displayNameController.text.trim();
+    if (displayName.isEmpty) {
+      setState(() => _errorMessage = 'Please enter your name.');
+      return;
+    }
+    final parsedBirthdate = _parseBirthdate(_birthdayController.text.trim());
+    if (parsedBirthdate == null) {
+      setState(() => _errorMessage = 'Birthday must be in MM/DD/YYYY format.');
+      return;
+    }
+    if (_calculateAge(parsedBirthdate) < 18) {
+      setState(() => _errorMessage = 'You must be at least 18 years old.');
+      return;
+    }
+    _birthdate = parsedBirthdate;
+    if (_birthdate == null) {
+      setState(() => _errorMessage = 'Please select your birthday.');
+      return;
+    }
+    if (_gender == null) {
+      setState(() => _errorMessage = 'Please select your gender.');
+      return;
+    }
     if (_totalPhotoCount < 1) {
       setState(() => _errorMessage = 'Add at least one profile photo.');
       return;
@@ -243,19 +323,12 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
     final city = _cityController.text.trim();
     if (city.isEmpty || _latitude == null || _longitude == null) {
       setState(
-        () => _errorMessage = 'Choose your city from the suggestions list so we can save your location.',
+        () => _errorMessage =
+            'Choose your city from the suggestions list so we can save your location.',
       );
       return;
     }
     final bio = _bioController.text.trim();
-    if (bio.isEmpty) {
-      setState(() => _errorMessage = 'Please write a short bio.');
-      return;
-    }
-    if (_interests.isEmpty) {
-      setState(() => _errorMessage = 'Add at least one interest.');
-      return;
-    }
 
     setState(() => _saving = true);
     try {
@@ -264,6 +337,12 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
       await UserFirestore.saveOnboardingProfile(
         uid: widget.user.uid,
         profileImageUrls: allUrls,
+        displayName: displayName,
+        birthdate: _birthdate!,
+        gender: _gender!,
+        genderPreference: _genderPreference,
+        agePreferenceMin: _ageRange.start.round(),
+        agePreferenceMax: _ageRange.end.round(),
         city: city,
         latitude: _latitude!,
         longitude: _longitude!,
@@ -288,10 +367,21 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
       appBar: AppBar(
         title: const Text('Your profile'),
         automaticallyImplyLeading: false,
+        leading: IconButton(
+          tooltip: 'Sign out',
+          onPressed: _saving ? null : () => FirebaseAuth.instance.signOut(),
+          icon: const Icon(Icons.logout),
+        ),
         actions: [
           TextButton(
-            onPressed: _saving ? null : () => FirebaseAuth.instance.signOut(),
-            child: const Text('Sign out'),
+            onPressed: _saving ? null : _save,
+            child: _saving
+                ? const SizedBox(
+                    height: 16,
+                    width: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('Continue'),
           ),
         ],
       ),
@@ -299,18 +389,6 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
         child: ListView(
           padding: const EdgeInsets.all(20),
           children: [
-            Text(
-              'Tell us about you',
-              style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Photos are stored in Firebase Storage; the rest is saved to your user document.',
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-            const SizedBox(height: 24),
             Text('Profile photos', style: theme.textTheme.titleMedium),
             const SizedBox(height: 8),
             Text(
@@ -352,7 +430,19 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
                   ),
               ],
             ),
-            const SizedBox(height: 28),
+            const SizedBox(height: 24),
+            Text('Name', style: theme.textTheme.titleMedium),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _displayNameController,
+              textCapitalization: TextCapitalization.words,
+              maxLength: 60,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                hintText: 'First Name',
+              ),
+            ),
+            const SizedBox(height: 8),
             Text('City', style: theme.textTheme.titleMedium),
             const SizedBox(height: 8),
             TapRegion(
@@ -466,6 +556,66 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
                 ],
               ),
             ],
+            const SizedBox(height: 24),
+            Text('Birthday', style: theme.textTheme.titleMedium),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _birthdayController,
+              keyboardType: TextInputType.datetime,
+              inputFormatters: [UsDateTextInputFormatter()],
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                hintText: 'MM/DD/YYYY',
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text('I am a', style: theme.textTheme.titleMedium),
+            const SizedBox(height: 8),
+            DropdownButtonFormField<String>(
+              value: _gender,
+              decoration: const InputDecoration(border: OutlineInputBorder()),
+              items: [
+                for (final entry in _genderOptions.entries)
+                  DropdownMenuItem(value: entry.key, child: Text(entry.value)),
+              ],
+              onChanged: _saving ? null : (v) => setState(() => _gender = v),
+            ),
+            const SizedBox(height: 16),
+            Text('Interested in', style: theme.textTheme.titleMedium),
+            const SizedBox(height: 8),
+            DropdownButtonFormField<String>(
+              value: _genderPreference,
+              decoration: const InputDecoration(border: OutlineInputBorder()),
+              items: [
+                for (final entry in _genderPreferenceOptions.entries)
+                  DropdownMenuItem(value: entry.key, child: Text(entry.value)),
+              ],
+              onChanged: _saving
+                  ? null
+                  : (v) {
+                      if (v == null) {
+                        return;
+                      }
+                      setState(() => _genderPreference = v);
+                    },
+            ),
+            const SizedBox(height: 24),
+            Text(
+              'Age preference: ${_ageRange.start.round()}-${_ageRange.end.round()}',
+              style: theme.textTheme.titleMedium,
+            ),
+            RangeSlider(
+              values: _ageRange,
+              min: 18,
+              max: 100,
+              divisions: 82,
+              labels: RangeLabels(
+                '${_ageRange.start.round()}',
+                '${_ageRange.end.round()}',
+              ),
+              onChanged: _saving ? null : (v) => setState(() => _ageRange = v),
+            ),
+            const SizedBox(height: 28),
             if (_errorMessage != null) ...[
               const SizedBox(height: 20),
               Text(
@@ -475,30 +625,54 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
                 ),
               ),
             ],
-            const SizedBox(height: 28),
-            FilledButton(
-              onPressed: _saving ? null : _save,
-              child: _saving
-                  ? const SizedBox(
-                      height: 22,
-                      width: 22,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Text('Save and continue'),
-            ),
           ],
         ),
       ),
     );
   }
+
+  String _formatBirthdate(DateTime value) {
+    final mm = value.month.toString().padLeft(2, '0');
+    final dd = value.day.toString().padLeft(2, '0');
+    return '$mm/$dd/${value.year}';
+  }
+
+  DateTime? _parseBirthdate(String input) {
+    final match = RegExp(r'^(\d{2})/(\d{2})/(\d{4})$').firstMatch(input);
+    if (match == null) {
+      return null;
+    }
+    final month = int.parse(match.group(1)!);
+    final day = int.parse(match.group(2)!);
+    final year = int.parse(match.group(3)!);
+    if (month < 1 || month > 12) {
+      return null;
+    }
+    final candidate = DateTime(year, month, day);
+    if (candidate.year != year ||
+        candidate.month != month ||
+        candidate.day != day) {
+      return null;
+    }
+    return candidate;
+  }
+
+  int _calculateAge(DateTime birthdate) {
+    final now = DateTime.now();
+    var age = now.year - birthdate.year;
+    final hasHadBirthdayThisYear =
+        now.month > birthdate.month ||
+        (now.month == birthdate.month && now.day >= birthdate.day);
+    if (!hasHadBirthdayThisYear) {
+      age--;
+    }
+    return age;
+  }
 }
 
 class _PhotoThumb extends StatelessWidget {
-  const _PhotoThumb({
-    this.imageUrl,
-    this.xFile,
-    required this.onRemove,
-  }) : assert(imageUrl != null || xFile != null);
+  const _PhotoThumb({this.imageUrl, this.xFile, required this.onRemove})
+    : assert(imageUrl != null || xFile != null);
 
   final String? imageUrl;
   final XFile? xFile;
@@ -537,11 +711,7 @@ class _PhotoThumb extends StatelessWidget {
       children: [
         ClipRRect(
           borderRadius: BorderRadius.circular(12),
-          child: SizedBox(
-            width: 88,
-            height: 88,
-            child: imageChild,
-          ),
+          child: SizedBox(width: 88, height: 88, child: imageChild),
         ),
         Positioned(
           top: -6,
