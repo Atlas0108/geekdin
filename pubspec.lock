@@ -65,30 +65,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "5.3.0"
-  cloud_functions:
-    dependency: "direct main"
-    description:
-      name: cloud_functions
-      sha256: "036aa4f3b880935bda48fd6ab516e0f11686c328a46313226b9cbad9220b4c59"
-      url: "https://pub.dev"
-    source: hosted
-    version: "6.2.0"
-  cloud_functions_platform_interface:
-    dependency: transitive
-    description:
-      name: cloud_functions_platform_interface
-      sha256: "2a52ee909011b0f33ae2074b7a431bc2d7fff4618948d93d5e71830688e0733f"
-      url: "https://pub.dev"
-    source: hosted
-    version: "5.8.12"
-  cloud_functions_web:
-    dependency: transitive
-    description:
-      name: cloud_functions_web
-      sha256: be032545ca1621248ffd251930952835593a9b8136895379930cecea766379a4
-      url: "https://pub.dev"
-    source: hosted
-    version: "5.1.5"
   collection:
     dependency: transitive
     description:
@@ -404,10 +380,10 @@ packages:
     dependency: transitive
     description:
       name: meta
-      sha256: "23f08335362185a5ea2ad3a4e597f1375e78bce8a040df5c600c8d3552ef2394"
+      sha256: "1741988757a65eb6b36abe716829688cf01910bbf91c34354ff7ec1c3de2b349"
       url: "https://pub.dev"
     source: hosted
-    version: "1.17.0"
+    version: "1.18.0"
   mime:
     dependency: transitive
     description:
@@ -481,10 +457,10 @@ packages:
     dependency: transitive
     description:
       name: test_api
-      sha256: "8161c84903fd860b26bfdefb7963b3f0b68fee7adea0f59ef805ecca346f0c7a"
+      sha256: "949a932224383300f01be9221c39180316445ecb8e7547f70a41a35bf421fb9e"
       url: "https://pub.dev"
     source: hosted
-    version: "0.7.10"
+    version: "0.7.11"
   typed_data:
     dependency: transitive
     description:

@@ -8,8 +8,40 @@ service cloud.firestore {
       allow update: if request.auth != null && request.auth.uid == userId;
       allow delete: if request.auth != null && request.auth.uid == userId;
 
+      // `users/{likerId}/swipes/{targetId}`: liker can write; target can read
+      // (so they can see "did this person like me" and for collection-group "likes I received").
       match /swipes/{targetUserId} {
-        allow read, write: if request.auth != null && request.auth.uid == userId;
+        allow read: if request.auth != null
+          && (request.auth.uid == userId
+              || request.auth.uid == targetUserId);
+        allow create, update, delete: if request.auth != null
+          && request.auth.uid == userId;
+      }
+
+      // Someone liked you: only you list your inbox; the liker creates {fromUid} under you.
+      match /likesReceived/{fromUid} {
+        allow read: if request.auth != null && request.auth.uid == userId;
+        allow create, update, delete: if request.auth != null
+            && request.auth.uid == fromUid;
+      }
+
+      // Mutual matches: either side may create the mirrored doc so both can write once.
+      match /matches/{otherUserId} {
+        allow read: if request.auth != null
+          && (request.auth.uid == userId
+              || request.auth.uid == otherUserId);
+        allow create, update, delete: if request.auth != null
+          && (request.auth.uid == userId
+              || request.auth.uid == otherUserId);
+      }
+
+      // Chat thread metadata per match (last preview, for Messages list). Either participant
+      // can write the doc under the other person so both inboxes update when someone sends.
+      match /chats/{otherUserId} {
+        allow read: if request.auth != null && request.auth.uid == userId;
+        allow create, update, delete: if request.auth != null
+            && (request.auth.uid == userId
+                || request.auth.uid == otherUserId);
       }
     }
   }

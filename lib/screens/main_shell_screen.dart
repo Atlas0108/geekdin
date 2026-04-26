@@ -5,11 +5,11 @@ import 'package:flutter/material.dart';
 import '../services/user_firestore.dart';
 import 'chat_screen.dart';
 import 'geekout_screen.dart';
-import 'matches_screen.dart';
+import 'likes_screen.dart';
 import 'my_profile_screen.dart';
 import 'swipe_screen.dart';
 
-/// Bottom navigation: Swipe (default), Geekout, Matches, Chat, Profile.
+/// Bottom navigation: Swipe (default), Geekout, Likes, Chat, Profile.
 class MainShellScreen extends StatefulWidget {
   const MainShellScreen({super.key});
 
@@ -20,7 +20,7 @@ class MainShellScreen extends StatefulWidget {
 class _MainShellScreenState extends State<MainShellScreen> {
   int _index = 0;
 
-  static const _titles = ['Swipe', 'Geekout', 'Matches', 'Chat', 'Profile'];
+  static const _titles = ['Swipe', 'Geekout', 'Likes', 'Chat', 'Profile'];
 
   bool get _isSwipeTab => _index == 0;
   bool get _isProfileTab => _index == 4;
@@ -112,12 +112,14 @@ class _MainShellScreenState extends State<MainShellScreen> {
             ),
       body: IndexedStack(
         index: _index,
-        children: const [
-          SwipeScreen(),
-          GeekoutScreen(),
-          MatchesScreen(),
-          ChatScreen(),
-          MyProfileScreen(embeddedInShell: true),
+        children: [
+          const SwipeScreen(),
+          const GeekoutScreen(),
+          const LikesScreen(),
+          ChatScreen(
+            onOpenLikes: () => setState(() => _index = 2),
+          ),
+          const MyProfileScreen(embeddedInShell: true),
         ],
       ),
       bottomNavigationBar: NavigationBar(
@@ -135,9 +137,9 @@ class _MainShellScreenState extends State<MainShellScreen> {
             label: 'Geekout',
           ),
           NavigationDestination(
-            icon: Icon(Icons.favorite_outline),
-            selectedIcon: Icon(Icons.favorite),
-            label: 'Matches',
+            icon: Icon(Icons.people_outline),
+            selectedIcon: Icon(Icons.people),
+            label: 'Likes',
           ),
           NavigationDestination(
             icon: Icon(Icons.chat_bubble_outline),
@@ -229,6 +231,14 @@ class _DiscoverySettingsSheetState extends State<_DiscoverySettingsSheet> {
       UserFirestore.defaultAgeMinPreference.toDouble(),
       UserFirestore.defaultAgeMaxPreference.toDouble(),
     );
+  }
+
+  Future<void> _logout() async {
+    await FirebaseAuth.instance.signOut();
+    if (!mounted) {
+      return;
+    }
+    Navigator.of(context).pop();
   }
 
   Future<void> _save() async {
@@ -373,6 +383,20 @@ class _DiscoverySettingsSheetState extends State<_DiscoverySettingsSheet> {
               ),
             ),
           ],
+          const SizedBox(height: 28),
+          const Divider(),
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: _saving ? null : _logout,
+              icon: Icon(Icons.logout, color: theme.colorScheme.error),
+              label: Text(
+                'Log out',
+                style: TextStyle(color: theme.colorScheme.error),
+              ),
+            ),
+          ),
         ],
       ),
     );

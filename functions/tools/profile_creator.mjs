@@ -1,9 +1,9 @@
 /**
- * Creates 3 men + 3 women: Firebase Auth, profile photo in Storage, Firestore `users/{uid}`.
+ * Creates 100 demo accounts (50 men + 50 women): Firebase Auth, profile photos
+ * in Storage, Firestore `users/{uid}`.
  *
- * Images (relative to repo `lib/test_images/`):
- *   men/   — 3 files
- *   women/ — 3 files
+ * Photos are **downloaded from the public RandomUser API** (random people / faces
+ * by gender). No local `lib/test_images` files are used.
  *
  * Prerequisites (Firebase Auth Admin needs a **service account key**):
  *   • Put `*-firebase-adminsdk-*.json` under `lib/services/` (auto-detected), or
@@ -24,7 +24,7 @@
  */
 
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, extname, join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 
@@ -32,7 +32,6 @@ import admin from "firebase-admin";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "../..");
-const TEST_IMAGES = join(REPO_ROOT, "lib/test_images");
 
 const PROJECT_ID =
   process.env.FIREBASE_PROJECT_ID ||
@@ -42,47 +41,277 @@ const STORAGE_BUCKET =
   process.env.FIREBASE_STORAGE_BUCKET || "geekdin-f7049.firebasestorage.app";
 const SEED_PASSWORD =
   process.env.SEED_PASSWORD || "GeekdinSeedProfiles123!";
+const KEEP_EMAIL = "sean@geekdin.com";
+const MIN_SEED_AGE = 18;
+const MAX_SEED_AGE = 100;
+const PHOTO_COUNT_PER_PROFILE = 3;
+const MEN_COUNT = 50;
+const WOMEN_COUNT = 50;
+/** @type {`https://${string}`} */
+const RANDOM_USER_API = "https://randomuser.me/api/";
 
-/** @param {string} filePath */
-function contentTypeFor(filePath) {
-  const lower = filePath.toLowerCase();
-  if (lower.endsWith(".png")) return "image/png";
-  if (lower.endsWith(".webp")) return "image/webp";
-  if (lower.endsWith(".avif")) return "image/avif";
-  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
-  return "application/octet-stream";
-}
+const BIO_TEMPLATES = [
+  "Weekend hiker, coffee, and a shelf full of half-finished side projects.",
+  "Into games, live music, and good typography.",
+  "Remote-first worker; loves bookstores and bouldering gyms.",
+  "Collects old cameras and new hot sauces.",
+  "Data by day, board games and pizza by night.",
+  "Loves art museums, long runs, and quiet mornings.",
+  "Comics, sci-fi, and mechanical keyboards (sorry).",
+  "Cooks a lot, bikes when the weather allows.",
+  "Travel buff; always looking for a good ramen spot nearby.",
+  "Music-first: playlists, vinyl, and too many concert tickets.",
+];
+
+const INTERESTS_POOLS = [
+  ["photography", "hiking", "indie music"],
+  ["cooking", "pickleball", "podcasts"],
+  ["reading", "coffee", "running"],
+  ["film", "bouldering", "travel"],
+  ["design", "cycling", "museums"],
+  ["Flutter", "board games", "local food"],
+  ["backend", "sci-fi", "dungeons & dragons"],
+  ["mobile", "basketball", "mechanical keyboards"],
+  ["data", "cycling", "comics"],
+  ["painting", "jazz", "camping"],
+];
 
 function downloadUrl(bucketName, objectPath, token) {
   const encoded = encodeURIComponent(objectPath);
   return `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${encoded}?alt=media&token=${token}`;
 }
 
+/** @param {string} contentType */
+function extForContentType(contentType) {
+  const lower = (contentType || "").toLowerCase();
+  if (lower.includes("png")) return ".png";
+  if (lower.includes("webp")) return ".webp";
+  if (lower.includes("avif")) return ".avif";
+  if (lower.includes("jpeg") || lower.includes("jpg")) return ".jpg";
+  return ".jpg";
+}
+
 /**
  * @param {import('@google-cloud/storage').Bucket} bucket
  * @param {string} uid
- * @param {string} localPath
- * @param {string} destBase e.g. seed_man_1 (extension added from local file)
+ * @param {string} destBase
+ * @param {Buffer} buffer
+ * @param {string} contentType
  */
-async function uploadProfilePhoto(bucket, uid, localPath, destBase) {
-  const buffer = readFileSync(localPath);
-  const ext = extname(localPath) || ".jpg";
+async function uploadImageBuffer(bucket, uid, destBase, buffer, contentType) {
+  const ext = extForContentType(contentType);
   const destName = `${destBase}${ext}`;
   const objectPath = `users/${uid}/profile_images/${destName}`;
   const file = bucket.file(objectPath);
   const token = randomUUID();
-  const contentType = contentTypeFor(localPath);
   await file.save(buffer, {
     resumable: false,
     metadata: {
-      contentType,
+      contentType: contentType || "image/jpeg",
       metadata: {
         firebaseStorageDownloadTokens: token,
       },
     },
   });
-  const url = downloadUrl(bucket.name, objectPath, token);
-  return { objectPath, url };
+  return { objectPath, url: downloadUrl(bucket.name, objectPath, token) };
+}
+
+/**
+ * @param {string} url
+ * @param {number} [attempts]
+ */
+async function downloadImageWithRetry(url, attempts = 3) {
+  let lastErr;
+  for (let a = 0; a < attempts; a++) {
+    try {
+      const res = await fetch(url, {
+        headers: { "user-agent": "geekdin-profile-creator/1.0" },
+        redirect: "follow",
+      });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const ab = await res.arrayBuffer();
+      const buffer = Buffer.from(ab);
+      const type = (res.headers.get("content-type") || "image/jpeg").split(";")[0].trim();
+      return { buffer, contentType: type };
+    } catch (e) {
+      lastErr = e;
+      if (a < attempts - 1) {
+        await new Promise((r) => setTimeout(r, 400 * (a + 1)));
+      }
+    }
+  }
+  throw lastErr ?? new Error("downloadImage failed");
+}
+
+/**
+ * Fetches 3 users of the given Firestore gender to get 3 different portrait URLs.
+ * @param {'man' | 'woman'} firestoreGender
+ */
+async function fetchRandomUserTriple(firestoreGender) {
+  const apiGender = firestoreGender === "man" ? "male" : "female";
+  const params = new URLSearchParams({
+    results: String(PHOTO_COUNT_PER_PROFILE),
+    gender: apiGender,
+    noinfo: "1",
+    nat: "us,gb,ca,au,de,fr,es,ie",
+  });
+  const url = `${RANDOM_USER_API}?${params.toString()}`;
+
+  let lastErr;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      const res = await fetch(url, { headers: { "user-agent": "geekdin-profile-creator/1.0" } });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      const list = data?.results;
+      if (!Array.isArray(list) || list.length < PHOTO_COUNT_PER_PROFILE) {
+        throw new Error("randomuser: unexpected payload");
+      }
+      return list.slice(0, PHOTO_COUNT_PER_PROFILE);
+    } catch (e) {
+      lastErr = e;
+      await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+    }
+  }
+  throw lastErr ?? new Error("fetchRandomUserTriple failed");
+}
+
+/**
+ * Picks the main profile row (name + city) from the first result; uses all three for images.
+ * @param {any[]} triple
+ * @param {number} seedIndex
+ */
+function profileFromRandomUser(triple, seedIndex) {
+  const u0 = triple[0];
+  const n = u0.name;
+  const displayName = `${n.first} ${n.last}`.replace(/\b\w/g, (c) => c.toUpperCase());
+  const loc = u0.location;
+  const statePart = loc.state ? `${loc.state}, ` : "";
+  const city = `${loc.city} · ${statePart}${loc.country}`.replace(/\s+,/g, ",");
+  const rawLat = loc.coordinates?.latitude ?? loc.coordinates?.lat;
+  const rawLng = loc.coordinates?.longitude ?? loc.coordinates?.lon;
+  const lat = parseFloat(String(rawLat ?? "NaN"));
+  const lng = parseFloat(String(rawLng ?? "NaN"));
+  let latitude = Number.isFinite(lat) ? lat : 40.7128;
+  let longitude = Number.isFinite(lng) ? lng : -74.006;
+  if (latitude === 0 && longitude === 0) {
+    latitude = 40.7128;
+    longitude = -74.006;
+  }
+  const bio = BIO_TEMPLATES[seedIndex % BIO_TEMPLATES.length];
+  const interests = INTERESTS_POOLS[seedIndex % INTERESTS_POOLS.length];
+  return { displayName, city, latitude, longitude, bio, interests };
+}
+
+/** @param {number} minInclusive @param {number} maxInclusive */
+function randomInt(minInclusive, maxInclusive) {
+  return (
+    Math.floor(Math.random() * (maxInclusive - minInclusive + 1)) + minInclusive
+  );
+}
+
+function randomBirthdateBetweenAges(minAge, maxAge) {
+  const now = new Date();
+  const latestDob = new Date(
+    Date.UTC(now.getUTCFullYear() - minAge, now.getUTCMonth(), now.getUTCDate()),
+  );
+  const earliestDob = new Date(
+    Date.UTC(
+      now.getUTCFullYear() - (maxAge + 1),
+      now.getUTCMonth(),
+      now.getUTCDate() + 1,
+    ),
+  );
+  const atMs = randomInt(earliestDob.getTime(), latestDob.getTime());
+  const d = new Date(atMs);
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+}
+
+function calculateAgeFromBirthdate(birthdate) {
+  const now = new Date();
+  let age = now.getUTCFullYear() - birthdate.getUTCFullYear();
+  const hadBirthdayThisYear =
+    now.getUTCMonth() > birthdate.getUTCMonth() ||
+    (now.getUTCMonth() === birthdate.getUTCMonth() &&
+      now.getUTCDate() >= birthdate.getUTCDate());
+  if (!hadBirthdayThisYear) {
+    age -= 1;
+  }
+  return age;
+}
+
+async function listAllAuthUsers() {
+  const all = [];
+  let pageToken = undefined;
+  do {
+    const page = await admin.auth().listUsers(1000, pageToken);
+    all.push(...page.users);
+    pageToken = page.pageToken;
+  } while (pageToken);
+  return all;
+}
+
+/**
+ * Removes all users except KEEP_EMAIL from Auth/Firestore/Storage.
+ * @param {import('firebase-admin/firestore').Firestore} db
+ * @param {import('@google-cloud/storage').Bucket} bucket
+ */
+async function purgeUsersExceptKeep(db, bucket) {
+  const allUsers = await listAllAuthUsers();
+  const keepAuthUser = allUsers.find(
+    (u) => (u.email || "").toLowerCase() === KEEP_EMAIL.toLowerCase(),
+  );
+  const keepUid = keepAuthUser?.uid ?? null;
+
+  const authDeleteUids = allUsers
+    .filter((u) => u.uid !== keepUid)
+    .map((u) => u.uid);
+  if (authDeleteUids.length > 0) {
+    const chunks = [];
+    for (let i = 0; i < authDeleteUids.length; i += 1000) {
+      chunks.push(authDeleteUids.slice(i, i + 1000));
+    }
+    for (const chunk of chunks) {
+      await admin.auth().deleteUsers(chunk);
+    }
+  }
+
+  const usersSnap = await db.collection("users").get();
+  const deletedFirestoreUids = [];
+  for (const doc of usersSnap.docs) {
+    if (doc.id === keepUid) {
+      continue;
+    }
+    if (typeof db.recursiveDelete === "function") {
+      await db.recursiveDelete(doc.ref);
+    } else {
+      await doc.ref.delete();
+    }
+    deletedFirestoreUids.push(doc.id);
+  }
+
+  const storageDeleteUids = new Set([
+    ...authDeleteUids,
+    ...deletedFirestoreUids.filter((uid) => uid !== keepUid),
+  ]);
+  for (const uid of storageDeleteUids) {
+    try {
+      await bucket.deleteFiles({ prefix: `users/${uid}/` });
+    } catch (_) {
+      // Ignore missing objects or per-object delete errors and continue purge.
+    }
+  }
+
+  return {
+    keepUid,
+    deletedAuthUsers: authDeleteUids.length,
+    deletedFirestoreUsers: deletedFirestoreUids.length,
+    deletedStorageUserFolders: storageDeleteUids.size,
+  };
 }
 
 /** First `*-firebase-adminsdk-*.json` in repo `lib/services/`, if any. */
@@ -163,75 +392,28 @@ async function getOrCreateAuthUser({ email, password, displayName }) {
   }
 }
 
-/** @type {{ displayName: string; email: string; imageRelative: string; bio: string; interests: string[]; city: string; latitude: number; longitude: number; gender: 'man' | 'woman'; }[]} */
-const PROFILES = [
-  {
-    displayName: "Maya Chen",
-    email: "seed.woman.1@geekdin.local",
-    imageRelative: join("women", "images (1).jpeg"),
-    bio: "Product designer who loves indie games and weekend hikes.",
-    interests: ["design", "indie games", "hiking"],
-    city: "Seattle · Washington, United States, US",
-    latitude: 47.6062,
-    longitude: -122.3321,
-    gender: "woman",
-  },
-  {
-    displayName: "Jordan Rivera",
-    email: "seed.woman.2@geekdin.local",
-    imageRelative: join("women", "download.jpeg"),
-    bio: "Backend engineer, coffee snob, and sci-fi book club regular.",
-    interests: ["backend", "coffee", "sci-fi"],
-    city: "Austin · Texas, United States, US",
-    latitude: 30.2672,
-    longitude: -97.7431,
-    gender: "woman",
-  },
-  {
-    displayName: "Sam Okonkwo",
-    email: "seed.woman.3@geekdin.local",
-    imageRelative: join("women", "images (2).jpeg"),
-    bio: "Flutter dev, board games, and volunteering at the makerspace.",
-    interests: ["Flutter", "board games", "makerspace"],
-    city: "Toronto · Ontario, Canada, CA",
-    latitude: 43.6532,
-    longitude: -79.3832,
-    gender: "woman",
-  },
-  {
-    displayName: "Chris Patel",
-    email: "seed.man.1@geekdin.local",
-    imageRelative: join("men", "71G18R09DwL._AC_UY1000_.jpg"),
-    bio: "Mobile dev, pickup basketball, and mechanical keyboards.",
-    interests: ["mobile", "basketball", "keyboards"],
-    city: "Chicago · Illinois, United States, US",
-    latitude: 41.8781,
-    longitude: -87.6298,
-    gender: "man",
-  },
-  {
-    displayName: "Alex Morgan",
-    email: "seed.man.2@geekdin.local",
-    imageRelative: join("men", "hlh050121feablacksuperpower-001-1618863056.avif"),
-    bio: "Data scientist, comics collector, and weekend cyclist.",
-    interests: ["data", "comics", "cycling"],
-    city: "Denver · Colorado, United States, US",
-    latitude: 39.7392,
-    longitude: -104.9903,
-    gender: "man",
-  },
-  {
-    displayName: "Riley Brooks",
-    email: "seed.man.3@geekdin.local",
-    imageRelative: join("men", "images (3).jpeg"),
-    bio: "Game dev, D&D DM, and espresso experiments at home.",
-    interests: ["game dev", "D&D", "coffee"],
-    city: "Portland · Oregon, United States, US",
-    latitude: 45.5152,
-    longitude: -122.6784,
-    gender: "man",
-  },
-];
+/**
+ * 50 women (seed.woman.1..50) + 50 men (seed.man.1..50) for stable logins.
+ * @returns {{ displayName: string; email: string; bio: string; interests: string[]; city: string; latitude: number; longitude: number; gender: 'man' | 'woman'; slugOrdinal: number; }[]}
+ */
+function buildSeedRows() {
+  const rows = [];
+  for (let i = 1; i <= WOMEN_COUNT; i++) {
+    rows.push({
+      email: `seed.woman.${i}@geekdin.local`,
+      gender: "woman",
+      slugOrdinal: i,
+    });
+  }
+  for (let i = 1; i <= MEN_COUNT; i++) {
+    rows.push({
+      email: `seed.man.${i}@geekdin.local`,
+      gender: "man",
+      slugOrdinal: i,
+    });
+  }
+  return rows;
+}
 
 async function main() {
   admin.initializeApp({
@@ -244,29 +426,53 @@ async function main() {
   const db = admin.firestore();
   const FieldValue = admin.firestore.FieldValue;
 
-  /** @type {{ uid: string; email: string; displayName: string; gender: string; profileImageUrl: string; storagePath: string; }[]} */
+  const purge = await purgeUsersExceptKeep(db, bucket);
+  console.log(
+    `Purge complete: kept ${KEEP_EMAIL}${purge.keepUid ? ` (${purge.keepUid})` : " (not found)"}; deleted auth=${purge.deletedAuthUsers}, firestore=${purge.deletedFirestoreUsers}, storageFolders=${purge.deletedStorageUserFolders}`,
+  );
+  console.log();
+
+  const PROFILES = buildSeedRows();
+  /** @type {{ uid: string; email: string; displayName: string; gender: string; genderPreference: string; age: number; birthdate: string; profileImageUrls: string[]; storagePaths: string[]; }[]} */
   const results = [];
 
   for (let i = 0; i < PROFILES.length; i++) {
     const row = PROFILES[i];
-    const localPath = join(TEST_IMAGES, row.imageRelative);
+    const isMan = row.gender === "man";
+    const genderPreference = isMan ? "women" : "men";
+    const slug = isMan
+      ? `seed_man_${row.slugOrdinal}`
+      : `seed_woman_${row.slugOrdinal}`;
+
+    const triple = await fetchRandomUserTriple(row.gender);
+    const meta = profileFromRandomUser(triple, i);
     const user = await getOrCreateAuthUser({
       email: row.email,
       password: SEED_PASSWORD,
-      displayName: row.displayName,
+      displayName: meta.displayName,
     });
 
-    const slug =
-      row.gender === "man"
-        ? `seed_man_${PROFILES.filter((_, j) => j <= i && PROFILES[j].gender === "man").length}`
-        : `seed_woman_${PROFILES.filter((_, j) => j <= i && PROFILES[j].gender === "woman").length}`;
+    const profileImageUrls = [];
+    const storagePaths = [];
+    for (let photoIndex = 0; photoIndex < triple.length; photoIndex++) {
+      const imageUrl = triple[photoIndex].picture?.large;
+      if (!imageUrl) {
+        throw new Error("randomuser: missing picture.large");
+      }
+      const { buffer, contentType } = await downloadImageWithRetry(imageUrl);
+      const { url, objectPath } = await uploadImageBuffer(
+        bucket,
+        user.uid,
+        `${slug}_${photoIndex + 1}`,
+        buffer,
+        contentType,
+      );
+      profileImageUrls.push(url);
+      storagePaths.push(objectPath);
+    }
 
-    const { url, objectPath } = await uploadProfilePhoto(
-      bucket,
-      user.uid,
-      localPath,
-      slug,
-    );
+    const birthdate = randomBirthdateBetweenAges(MIN_SEED_AGE, MAX_SEED_AGE);
+    const age = calculateAgeFromBirthdate(birthdate);
 
     await db
       .collection("users")
@@ -274,15 +480,21 @@ async function main() {
       .set(
         {
           email: row.email,
-          displayName: row.displayName,
+          displayName: meta.displayName,
           gender: row.gender,
+          genderPreference,
+          agePreference: { min: MIN_SEED_AGE, max: MAX_SEED_AGE },
+          distance: 50,
+          isGlobal: false,
+          preferenceUpdatedAt: FieldValue.serverTimestamp(),
+          birthdate: admin.firestore.Timestamp.fromDate(birthdate),
           createdAt: FieldValue.serverTimestamp(),
-          profileImageUrls: [url],
-          city: row.city,
-          latitude: row.latitude,
-          longitude: row.longitude,
-          bio: row.bio,
-          interests: row.interests,
+          profileImageUrls,
+          city: meta.city,
+          latitude: meta.latitude,
+          longitude: meta.longitude,
+          bio: meta.bio,
+          interests: meta.interests,
           profileUpdatedAt: FieldValue.serverTimestamp(),
           seedProfile: true,
         },
@@ -292,14 +504,20 @@ async function main() {
     results.push({
       uid: user.uid,
       email: row.email,
-      displayName: row.displayName,
+      displayName: meta.displayName,
       gender: row.gender,
-      profileImageUrl: url,
-      storagePath: objectPath,
+      genderPreference,
+      age,
+      birthdate: birthdate.toISOString().slice(0, 10),
+      profileImageUrls,
+      storagePaths,
     });
 
-    console.log(`OK ${row.displayName} (${row.gender}) — ${user.uid}`);
-    console.log(`   ${url}\n`);
+    if ((i + 1) % 10 === 0 || i === 0) {
+      console.log(
+        `Progress ${i + 1}/${PROFILES.length} — ${row.email} (${row.gender}, age ${age})`,
+      );
+    }
   }
 
   const jsonPath = join(__dirname, "profile_creator.generated.json");
@@ -313,6 +531,7 @@ export const SEED_ACCOUNT_PASSWORD = ${JSON.stringify(SEED_PASSWORD)};
 `;
   writeFileSync(mjsPath, mjsBody, "utf8");
 
+  console.log();
   console.log(`Wrote ${jsonPath}`);
   console.log(`Wrote ${mjsPath}`);
 }

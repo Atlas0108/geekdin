@@ -5,73 +5,10 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_card_swiper/flutter_card_swiper.dart';
 
-import '../services/user_firestore.dart';
+import '../models/discover_profile.dart';
+import '../services/like_match_service.dart';
 import '../widgets/firebase_profile_image.dart';
-
-// --- Discovery compatibility (gender + who-you're-into) ----------------------
-
-const _validGenderKeys = <String>{'woman', 'man', 'non_binary', 'other'};
-
-const _validPreferenceKeys = <String>{
-  'everyone',
-  'women',
-  'men',
-  'non_binary',
-};
-
-const _legacyGenderAlias = <String, String>{
-  'female': 'woman',
-  'male': 'man',
-  'nb': 'non_binary',
-  'enby': 'non_binary',
-  'nonbinary': 'non_binary',
-  'non-binary': 'non_binary',
-  'x': 'non_binary',
-};
-
-const _legacyPrefAlias = <String, String>{
-  'woman': 'women',
-  'women': 'women',
-  'man': 'men',
-  'men': 'men',
-  'all': 'everyone',
-  'any': 'everyone',
-  'anyone': 'everyone',
-  'nonbinary': 'non_binary',
-  'non-binary': 'non_binary',
-};
-
-String? _normalizeGenderKeyForMatch(String? raw) {
-  if (raw == null) {
-    return null;
-  }
-  final t = raw.trim().toLowerCase();
-  if (t.isEmpty || t == 'unspecified') {
-    return null;
-  }
-  if (_validGenderKeys.contains(t)) {
-    return t;
-  }
-  return _legacyGenderAlias[t];
-}
-
-String _normalizePreferenceKeyForMatch(String? raw) {
-  if (raw == null) {
-    return UserFirestore.defaultGenderPreference;
-  }
-  final t = raw.trim().toLowerCase();
-  if (t.isEmpty) {
-    return UserFirestore.defaultGenderPreference;
-  }
-  if (_validPreferenceKeys.contains(t)) {
-    return t;
-  }
-  final legacy = _legacyPrefAlias[t];
-  if (legacy != null) {
-    return legacy;
-  }
-  return UserFirestore.defaultGenderPreference;
-}
+import '../widgets/user_profile_detail_sheet.dart';
 
 /// Whether [whoYouWant] (stored `genderPreference`) includes [other]s gender
 /// (stored `gender` key, e.g. `woman` / `man`).
@@ -100,11 +37,11 @@ bool _mutualPreferenceMatch({
   required String? otherGender,
   required String otherPreference,
 }) {
-  final oGender = _normalizeGenderKeyForMatch(otherGender);
+  final oGender = parseGenderKeyForMatch(otherGender);
   if (oGender == null) {
     return false;
   }
-  final oPref = _normalizePreferenceKeyForMatch(otherPreference);
+  final oPref = parsePreferenceKeyForMatch(otherPreference);
   return _preferenceIncludesGender(
         whoYouWant: viewerPreference,
         otherGender: oGender,
@@ -240,8 +177,8 @@ class _SwipeScreenState extends State<SwipeScreen> {
     try {
       final myDoc = await FirebaseFirestore.instance.collection('users').doc(me).get();
       final myData = myDoc.data() ?? {};
-      final myGender = _normalizeGenderKeyForMatch(myData['gender'] as String?);
-      final myPref = _normalizePreferenceKeyForMatch(
+      final myGender = parseGenderKeyForMatch(myData['gender'] as String?);
+      final myPref = parsePreferenceKeyForMatch(
         myData['genderPreference'] as String?,
       );
       if (myGender == null) {
@@ -358,16 +295,6 @@ class _SwipeScreenState extends State<SwipeScreen> {
     await _loadDeck();
   }
 
-  Future<void> _recordSwipe(String targetUid, bool liked) async {
-    final me = FirebaseAuth.instance.currentUser!.uid;
-    await FirebaseFirestore.instance
-        .collection('users')
-        .doc(me)
-        .collection('swipes')
-        .doc(targetUid)
-        .set({'liked': liked, 'at': FieldValue.serverTimestamp()});
-  }
-
   /// Persists the swiped profile (index is stable until [onEnd] clears the deck).
   Future<void> _persistSwipe(int previousIndex, bool liked) async {
     if (previousIndex < 0 || previousIndex >= _deck.length) {
@@ -375,16 +302,80 @@ class _SwipeScreenState extends State<SwipeScreen> {
     }
     final profile = _deck[previousIndex];
     try {
-      await _recordSwipe(profile.uid, liked);
-    } catch (_) {
+      final me = FirebaseAuth.instance.currentUser!.uid;
+      final result = await LikeMatchService.recordSwipeAndProcessMatch(
+        fromUid: me,
+        toUid: profile.uid,
+        liked: liked,
+      );
+      if (!mounted) {
+        return;
+      }
+      if (result == RecordSwipeResult.newMutualMatch) {
+        await _showItsAMatchDialog(profile);
+      }
+    } catch (e) {
       if (!mounted) {
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not save swipe — try again.')),
+        SnackBar(
+          content: Text('Could not save swipe: $e'),
+          duration: const Duration(seconds: 8),
+        ),
       );
       _swiperController.undo();
     }
+  }
+
+  Future<void> _showItsAMatchDialog(DiscoverProfile other) async {
+    if (!mounted) {
+      return;
+    }
+    final theme = Theme.of(context);
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text("It's a match!"),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (other.imageUrl != null)
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: AspectRatio(
+                    aspectRatio: 1,
+                    child: FirebaseProfileImage(
+                      url: other.imageUrl!,
+                      fit: BoxFit.cover,
+                    ),
+                  ),
+                )
+              else
+                Icon(
+                  Icons.person,
+                  size: 80,
+                  color: theme.colorScheme.outline,
+                ),
+              const SizedBox(height: 16),
+              Text(
+                'You and ${other.displayName} both liked each other.',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodyLarge,
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Nice'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   bool _onSwipe(
@@ -441,8 +432,9 @@ class _SwipeScreenState extends State<SwipeScreen> {
       builder: (context) {
         return SizedBox(
           height: MediaQuery.sizeOf(context).height,
-          child: _ProfileDetailsSheet(
+          child: UserProfileDetailSheet(
             profile: profile,
+            showSwipeActions: true,
             onPass: () {
               Navigator.of(context).pop();
               _swiperController.swipe(CardSwiperDirection.left);
@@ -627,238 +619,6 @@ class _SwipeScreenState extends State<SwipeScreen> {
           ),
         ),
       ],
-    );
-  }
-}
-
-class DiscoverProfile {
-  DiscoverProfile({
-    required this.uid,
-    required this.displayName,
-    required this.bio,
-    required this.imageUrl,
-    required this.imageUrls,
-    required this.interests,
-    this.city,
-    this.gender,
-    required this.genderPreference,
-  });
-
-  final String uid;
-  final String displayName;
-  final String bio;
-  final String? imageUrl;
-  final List<String> imageUrls;
-  final List<String> interests;
-  final String? city;
-  /// Normalized Firestore `gender` key for discovery matching, or null if not usable.
-  final String? gender;
-  /// Normalized `genderPreference` (defaults to [UserFirestore.defaultGenderPreference]).
-  final String genderPreference;
-
-  bool get hasPresentation =>
-      imageUrl != null && imageUrl!.isNotEmpty && displayName.trim().isNotEmpty;
-
-  static DiscoverProfile fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
-    final data = doc.data() ?? {};
-    final urls = data['profileImageUrls'];
-    final allUrls = <String>[];
-    String? url;
-    if (urls is List) {
-      for (final entry in urls) {
-        if (entry is String && entry.trim().isNotEmpty) {
-          allUrls.add(entry.trim());
-        }
-      }
-      if (allUrls.isNotEmpty) {
-        url = allUrls.first;
-      }
-    }
-    final rawInterests = data['interests'];
-    final interests = <String>[];
-    if (rawInterests is List) {
-      for (final entry in rawInterests) {
-        if (entry is String && entry.trim().isNotEmpty) {
-          interests.add(entry.trim());
-        }
-      }
-    }
-    return DiscoverProfile(
-      uid: doc.id,
-      displayName: (data['displayName'] as String?)?.trim().isNotEmpty == true
-          ? (data['displayName'] as String).trim()
-          : (data['email'] as String?)?.split('@').first ?? 'Someone',
-      bio: (data['bio'] as String?)?.trim() ?? '',
-      imageUrl: url,
-      imageUrls: allUrls,
-      interests: interests,
-      city: (data['city'] as String?)?.trim(),
-      gender: _normalizeGenderKeyForMatch(data['gender'] as String?),
-      genderPreference: _normalizePreferenceKeyForMatch(
-        data['genderPreference'] as String?,
-      ),
-    );
-  }
-}
-
-class _ProfileDetailsSheet extends StatelessWidget {
-  const _ProfileDetailsSheet({
-    required this.profile,
-    required this.onPass,
-    required this.onLike,
-  });
-
-  final DiscoverProfile profile;
-  final VoidCallback onPass;
-  final VoidCallback onLike;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      body: Stack(
-        children: [
-          ListView(
-            padding: EdgeInsets.zero,
-            children: [
-              AspectRatio(
-                aspectRatio: 3 / 4,
-                child: profile.imageUrl != null
-                    ? FirebaseProfileImage(url: profile.imageUrl!)
-                    : ColoredBox(
-                        color: theme.colorScheme.surfaceContainerHighest,
-                        child: Icon(
-                          Icons.person,
-                          size: 96,
-                          color: theme.colorScheme.outline,
-                        ),
-                      ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('Bio', style: theme.textTheme.titleMedium),
-                            const SizedBox(height: 8),
-                            Text(
-                              profile.bio.isEmpty
-                                  ? 'No bio yet.'
-                                  : profile.bio,
-                              style: theme.textTheme.bodyLarge,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('Interests', style: theme.textTheme.titleMedium),
-                            const SizedBox(height: 8),
-                            if (profile.interests.isEmpty)
-                              Text(
-                                'No interests listed.',
-                                style: theme.textTheme.bodyLarge,
-                              )
-                            else
-                              Wrap(
-                                spacing: 8,
-                                runSpacing: 8,
-                                children: [
-                                  for (final interest in profile.interests)
-                                    Chip(label: Text(interest)),
-                                ],
-                              ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 120),
-            ],
-          ),
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: SafeArea(
-              bottom: false,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 12, 0),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        profile.displayName,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.headlineSmall?.copyWith(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w700,
-                          shadows: const [
-                            Shadow(
-                              color: Color(0xAA000000),
-                              blurRadius: 8,
-                              offset: Offset(0, 1),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    IconButton.filled(
-                      onPressed: () => Navigator.of(context).pop(),
-                      style: IconButton.styleFrom(
-                        backgroundColor: Colors.black.withValues(alpha: 0.45),
-                      ),
-                      icon: const Icon(Icons.keyboard_arrow_down_rounded),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: SafeArea(
-              top: false,
-              minimum: const EdgeInsets.fromLTRB(24, 8, 24, 24),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  _CircleAction(
-                    accent: const Color(0xFFFF3AD4),
-                    icon: Icons.close_rounded,
-                    swapColors: false,
-                    onPressed: onPass,
-                  ),
-                  _CircleAction(
-                    accent: const Color(0xFF39FF14),
-                    icon: Icons.favorite_rounded,
-                    swapColors: false,
-                    onPressed: onLike,
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
     );
   }
 }
