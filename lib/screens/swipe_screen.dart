@@ -1,11 +1,138 @@
-import 'dart:async' show unawaited;
+import 'dart:async' show unawaited, StreamSubscription;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_card_swiper/flutter_card_swiper.dart';
 
+import '../services/user_firestore.dart';
 import '../widgets/firebase_profile_image.dart';
+
+// --- Discovery compatibility (gender + who-you're-into) ----------------------
+
+const _validGenderKeys = <String>{'woman', 'man', 'non_binary', 'other'};
+
+const _validPreferenceKeys = <String>{
+  'everyone',
+  'women',
+  'men',
+  'non_binary',
+};
+
+const _legacyGenderAlias = <String, String>{
+  'female': 'woman',
+  'male': 'man',
+  'nb': 'non_binary',
+  'enby': 'non_binary',
+  'nonbinary': 'non_binary',
+  'non-binary': 'non_binary',
+  'x': 'non_binary',
+};
+
+const _legacyPrefAlias = <String, String>{
+  'woman': 'women',
+  'women': 'women',
+  'man': 'men',
+  'men': 'men',
+  'all': 'everyone',
+  'any': 'everyone',
+  'anyone': 'everyone',
+  'nonbinary': 'non_binary',
+  'non-binary': 'non_binary',
+};
+
+String? _normalizeGenderKeyForMatch(String? raw) {
+  if (raw == null) {
+    return null;
+  }
+  final t = raw.trim().toLowerCase();
+  if (t.isEmpty || t == 'unspecified') {
+    return null;
+  }
+  if (_validGenderKeys.contains(t)) {
+    return t;
+  }
+  return _legacyGenderAlias[t];
+}
+
+String _normalizePreferenceKeyForMatch(String? raw) {
+  if (raw == null) {
+    return UserFirestore.defaultGenderPreference;
+  }
+  final t = raw.trim().toLowerCase();
+  if (t.isEmpty) {
+    return UserFirestore.defaultGenderPreference;
+  }
+  if (_validPreferenceKeys.contains(t)) {
+    return t;
+  }
+  final legacy = _legacyPrefAlias[t];
+  if (legacy != null) {
+    return legacy;
+  }
+  return UserFirestore.defaultGenderPreference;
+}
+
+/// Whether [whoYouWant] (stored `genderPreference`) includes [other]s gender
+/// (stored `gender` key, e.g. `woman` / `man`).
+bool _preferenceIncludesGender({
+  required String whoYouWant,
+  required String otherGender,
+}) {
+  switch (whoYouWant) {
+    case 'everyone':
+      return true;
+    case 'women':
+      return otherGender == 'woman';
+    case 'men':
+      return otherGender == 'man';
+    case 'non_binary':
+      return otherGender == 'non_binary' || otherGender == 'other';
+    default:
+      return false;
+  }
+}
+
+/// Both sides' "into" setting includes the other side's gender.
+bool _mutualPreferenceMatch({
+  required String viewerGender,
+  required String viewerPreference,
+  required String? otherGender,
+  required String otherPreference,
+}) {
+  final oGender = _normalizeGenderKeyForMatch(otherGender);
+  if (oGender == null) {
+    return false;
+  }
+  final oPref = _normalizePreferenceKeyForMatch(otherPreference);
+  return _preferenceIncludesGender(
+        whoYouWant: viewerPreference,
+        otherGender: oGender,
+      ) &&
+      _preferenceIncludesGender(
+        whoYouWant: oPref,
+        otherGender: viewerGender,
+      );
+}
+
+/// Fingerprint of fields that change how the swipe list is built (for you, not the candidate pool).
+String _discoveryPrefsSignature(Map<String, dynamic>? data) {
+  if (data == null) {
+    return '';
+  }
+  final ap = data['agePreference'];
+  var apStr = '';
+  if (ap is Map) {
+    apStr = '${ap['min']},${ap['max']}';
+  }
+  return [
+    data['gender']?.toString() ?? '',
+    data['genderPreference']?.toString() ?? '',
+    apStr,
+    data['distance']?.toString() ?? '',
+    data['isGlobal']?.toString() ?? '',
+  ].join('|');
+}
 
 /// Tinder-style stack via [CardSwiper]. Persists under `users/{me}/swipes/{theirUid}`.
 class SwipeScreen extends StatefulWidget {
@@ -27,20 +154,30 @@ class _SwipeScreenState extends State<SwipeScreen> {
   /// -1 = left, 1 = right, null = idle.
   final ValueNotifier<int?> _activeSwipeDirection = ValueNotifier<int?>(null);
 
+  /// Cancels when [SwipeScreen] is disposed.
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _userDocSub;
+
+  /// Last seen `users/{me}` discovery prefs; reload when this string changes.
+  String? _lastDiscoveryPrefsSignature;
+
+  /// Bumped on each [_loadDeck] start so stale async results are ignored.
+  int _loadGen = 0;
+
   @override
   void initState() {
     super.initState();
-    _loadDeck();
+    _subscribeToUserDoc();
   }
 
   @override
   void dispose() {
+    unawaited(_userDocSub?.cancel());
     _activeSwipeDirection.dispose();
     unawaited(_swiperController.dispose());
     super.dispose();
   }
 
-  Future<void> _loadDeck() async {
+  void _subscribeToUserDoc() {
     final me = FirebaseAuth.instance.currentUser?.uid;
     if (me == null) {
       setState(() {
@@ -50,12 +187,74 @@ class _SwipeScreenState extends State<SwipeScreen> {
       return;
     }
 
+    _userDocSub = FirebaseFirestore.instance
+        .collection('users')
+        .doc(me)
+        .snapshots()
+        .listen(
+      (snap) {
+        if (!mounted) {
+          return;
+        }
+        final sig = _discoveryPrefsSignature(snap.data());
+        if (sig == _lastDiscoveryPrefsSignature) {
+          return;
+        }
+        _lastDiscoveryPrefsSignature = sig;
+        unawaited(_loadDeck());
+      },
+      onError: (Object e) {
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _loading = false;
+          _error = '$e';
+        });
+      },
+    );
+  }
+
+  Future<void> _loadDeck() async {
+    final me = FirebaseAuth.instance.currentUser?.uid;
+    if (me == null) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _loading = false;
+        _error = 'Not signed in.';
+      });
+      return;
+    }
+
+    final gen = ++_loadGen;
+    if (!mounted) {
+      return;
+    }
     setState(() {
       _loading = true;
       _error = null;
     });
 
     try {
+      final myDoc = await FirebaseFirestore.instance.collection('users').doc(me).get();
+      final myData = myDoc.data() ?? {};
+      final myGender = _normalizeGenderKeyForMatch(myData['gender'] as String?);
+      final myPref = _normalizePreferenceKeyForMatch(
+        myData['genderPreference'] as String?,
+      );
+      if (myGender == null) {
+        if (mounted && gen == _loadGen) {
+          setState(() {
+            _loading = false;
+            _error =
+                'Set your gender and who you are interested in in settings before swiping.';
+          });
+        }
+        return;
+      }
+
       final swipedSnap = await FirebaseFirestore.instance
           .collection('users')
           .doc(me)
@@ -77,12 +276,20 @@ class _SwipeScreenState extends State<SwipeScreen> {
           continue;
         }
         final p = DiscoverProfile.fromDoc(doc);
-        if (p.hasPresentation) {
+        if (!p.hasPresentation) {
+          continue;
+        }
+        if (_mutualPreferenceMatch(
+          viewerGender: myGender,
+          viewerPreference: myPref,
+          otherGender: p.gender,
+          otherPreference: p.genderPreference,
+        )) {
           next.add(p);
         }
       }
 
-      if (!mounted) {
+      if (!mounted || gen != _loadGen) {
         return;
       }
       setState(() {
@@ -93,7 +300,7 @@ class _SwipeScreenState extends State<SwipeScreen> {
         _loading = false;
       });
     } catch (e) {
-      if (mounted) {
+      if (mounted && gen == _loadGen) {
         setState(() {
           _loading = false;
           _error = '$e';
@@ -433,6 +640,8 @@ class DiscoverProfile {
     required this.imageUrls,
     required this.interests,
     this.city,
+    this.gender,
+    required this.genderPreference,
   });
 
   final String uid;
@@ -442,6 +651,10 @@ class DiscoverProfile {
   final List<String> imageUrls;
   final List<String> interests;
   final String? city;
+  /// Normalized Firestore `gender` key for discovery matching, or null if not usable.
+  final String? gender;
+  /// Normalized `genderPreference` (defaults to [UserFirestore.defaultGenderPreference]).
+  final String genderPreference;
 
   bool get hasPresentation =>
       imageUrl != null && imageUrl!.isNotEmpty && displayName.trim().isNotEmpty;
@@ -480,6 +693,10 @@ class DiscoverProfile {
       imageUrls: allUrls,
       interests: interests,
       city: (data['city'] as String?)?.trim(),
+      gender: _normalizeGenderKeyForMatch(data['gender'] as String?),
+      genderPreference: _normalizePreferenceKeyForMatch(
+        data['genderPreference'] as String?,
+      ),
     );
   }
 }
