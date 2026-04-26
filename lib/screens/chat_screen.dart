@@ -2,7 +2,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import '../models/discover_profile.dart';
 import '../widgets/firebase_profile_image.dart';
+import '../widgets/user_profile_detail_sheet.dart';
 
 /// Chat hub: "New matches" (horizontal) for mutual matches with no [chats] thread yet;
 /// "Messages" (list) for matches that have [users/{me}/chats/{otherUid}] with history.
@@ -266,46 +268,70 @@ class _NewMatchCard extends StatelessWidget {
             }
           }
         }
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 100,
-              height: 128,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(12),
-                color: const Color(0xFF1A1A1A),
-              ),
-              clipBehavior: Clip.antiAlias,
-              child: imageUrl != null
-                  ? FirebaseProfileImage(
-                      url: imageUrl,
-                      fit: BoxFit.cover,
-                    )
-                  : const Center(
-                      child: Icon(
-                        Icons.person,
-                        size: 48,
-                        color: Colors.white24,
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () {
+            final doc = snap.data;
+            if (doc == null || !doc.exists) {
+              return;
+            }
+            showModalBottomSheet<void>(
+              context: context,
+              isScrollControlled: true,
+              useSafeArea: true,
+              backgroundColor: ChatScreen._bg,
+              builder: (ctx) {
+                return SizedBox(
+                  height: MediaQuery.sizeOf(ctx).height,
+                  child: UserProfileDetailSheet(
+                    profile: DiscoverProfile.fromDoc(doc),
+                    showSwipeActions: false,
+                  ),
+                );
+              },
+            );
+          },
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 100,
+                height: 128,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  color: const Color(0xFF1A1A1A),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: imageUrl != null
+                    ? FirebaseProfileImage(
+                        url: imageUrl,
+                        fit: BoxFit.cover,
+                      )
+                    : const Center(
+                        child: Icon(
+                          Icons.person,
+                          size: 48,
+                          color: Colors.white24,
+                        ),
                       ),
-                    ),
-            ),
-            const SizedBox(height: 6),
-            SizedBox(
-              width: 100,
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
+              ),
+              const SizedBox(height: 6),
+              SizedBox(
+                width: 100,
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         );
       },
     );

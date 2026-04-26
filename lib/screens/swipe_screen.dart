@@ -8,6 +8,7 @@ import 'package:flutter_card_swiper/flutter_card_swiper.dart';
 import '../models/discover_profile.dart';
 import '../services/like_match_service.dart';
 import '../widgets/firebase_profile_image.dart';
+import '../widgets/its_a_match_dialog.dart';
 import '../widgets/user_profile_detail_sheet.dart';
 
 /// Whether [whoYouWant] (stored `genderPreference`) includes [other]s gender
@@ -312,7 +313,7 @@ class _SwipeScreenState extends State<SwipeScreen> {
         return;
       }
       if (result == RecordSwipeResult.newMutualMatch) {
-        await _showItsAMatchDialog(profile);
+        await showItsAMatchDialog(context, profile);
       }
     } catch (e) {
       if (!mounted) {
@@ -326,56 +327,6 @@ class _SwipeScreenState extends State<SwipeScreen> {
       );
       _swiperController.undo();
     }
-  }
-
-  Future<void> _showItsAMatchDialog(DiscoverProfile other) async {
-    if (!mounted) {
-      return;
-    }
-    final theme = Theme.of(context);
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: true,
-      builder: (ctx) {
-        return AlertDialog(
-          title: const Text("It's a match!"),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (other.imageUrl != null)
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: AspectRatio(
-                    aspectRatio: 1,
-                    child: FirebaseProfileImage(
-                      url: other.imageUrl!,
-                      fit: BoxFit.cover,
-                    ),
-                  ),
-                )
-              else
-                Icon(
-                  Icons.person,
-                  size: 80,
-                  color: theme.colorScheme.outline,
-                ),
-              const SizedBox(height: 16),
-              Text(
-                'You and ${other.displayName} both liked each other.',
-                textAlign: TextAlign.center,
-                style: theme.textTheme.bodyLarge,
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('Nice'),
-            ),
-          ],
-        );
-      },
-    );
   }
 
   bool _onSwipe(

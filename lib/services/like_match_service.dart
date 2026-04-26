@@ -65,16 +65,26 @@ abstract final class LikeMatchService {
       return RecordSwipeResult.pass;
     }
 
+    // Mutual like: we need to know they already right-swiped you. Primary source is
+    // `users/{them}/swipes/{me}`. If that doc is missing, read fails, or is unclear,
+    // `users/{me}/likesReceived/{them}` still proves they liked you (Likes tab row).
     final theirSwipe = await _tryGetTheirSwipe(
       toUid: toUid,
       fromUid: fromUid,
     );
-    if (theirSwipe == null) {
-      return RecordSwipeResult.likePending;
-    }
-
-    if (theirSwipe.data()?['liked'] != true) {
-      return RecordSwipeResult.likePending;
+    if (theirSwipe != null && theirSwipe.exists) {
+      if (theirSwipe.data()?['liked'] != true) {
+        return RecordSwipeResult.likePending;
+      }
+    } else {
+      // Permission denied (null), or their swipe document missing: confirm via inbox.
+      final likesMe = await _tryGetLikesReceivedInbox(
+        recipientUid: fromUid,
+        likerUid: toUid,
+      );
+      if (likesMe == null || !likesMe.exists) {
+        return RecordSwipeResult.likePending;
+      }
     }
 
     final myMatch = fromRef.collection('matches').doc(toUid);
@@ -94,6 +104,8 @@ abstract final class LikeMatchService {
             .doc(fromUid),
         {'at': ts, 'otherUid': fromUid},
       );
+      // `users/{me}/likesReceived/{them}` — they had liked you; remove from Likes tab.
+      batch.delete(fromRef.collection('likesReceived').doc(toUid));
       await batch.commit();
       return RecordSwipeResult.newMutualMatch;
     } on FirebaseException catch (e) {
@@ -115,6 +127,26 @@ abstract final class LikeMatchService {
           .doc(toUid)
           .collection('swipes')
           .doc(fromUid)
+          .get();
+    } on FirebaseException catch (e) {
+      if (e.code == 'permission-denied') {
+        return null;
+      }
+      rethrow;
+    }
+  }
+
+  /// `users/{recipientUid}/likesReceived/{likerUid}` — the liker right-swiped the recipient.
+  static Future<DocumentSnapshot<Map<String, dynamic>>?> _tryGetLikesReceivedInbox({
+    required String recipientUid,
+    required String likerUid,
+  }) async {
+    try {
+      return await _db
+          .collection('users')
+          .doc(recipientUid)
+          .collection('likesReceived')
+          .doc(likerUid)
           .get();
     } on FirebaseException catch (e) {
       if (e.code == 'permission-denied') {

@@ -19,10 +19,14 @@ service cloud.firestore {
       }
 
       // Someone liked you: only you list your inbox; the liker creates {fromUid} under you.
+      // Inbox owner may delete when you match (clears the Likes card); liker can remove too.
       match /likesReceived/{fromUid} {
         allow read: if request.auth != null && request.auth.uid == userId;
-        allow create, update, delete: if request.auth != null
+        allow create, update: if request.auth != null
             && request.auth.uid == fromUid;
+        allow delete: if request.auth != null
+            && (request.auth.uid == fromUid
+                || request.auth.uid == userId);
       }
 
       // Mutual matches: either side may create the mirrored doc so both can write once.

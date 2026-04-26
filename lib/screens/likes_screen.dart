@@ -1,9 +1,13 @@
+import 'dart:async' show unawaited;
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../models/discover_profile.dart';
+import '../services/like_match_service.dart';
 import '../widgets/firebase_profile_image.dart';
+import '../widgets/its_a_match_dialog.dart';
 import '../widgets/user_profile_detail_sheet.dart';
 
 int _atMillis(Map<String, dynamic>? data) {
@@ -22,6 +26,135 @@ List<QueryDocumentSnapshot<Map<String, dynamic>>> _sortedLikerDocs(
     (a, b) => _atMillis(b.data()).compareTo(_atMillis(a.data())),
   );
   return out;
+}
+
+Future<void> _openLikerProfileForUid(
+  BuildContext context,
+  String likerUid,
+) async {
+  if (!context.mounted) {
+    return;
+  }
+  final doc = await FirebaseFirestore.instance
+      .collection('users')
+      .doc(likerUid)
+      .get();
+  if (!context.mounted) {
+    return;
+  }
+  if (!doc.exists) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text("That profile isn’t available."),
+        duration: Duration(seconds: 4),
+      ),
+    );
+    return;
+  }
+  _openLikerProfileSheet(listContext: context, userDoc: doc);
+}
+
+void _openLikerProfileSheet({
+  required BuildContext listContext,
+  required DocumentSnapshot<Map<String, dynamic>> userDoc,
+}) {
+  if (!userDoc.exists) {
+    return;
+  }
+  final profile = DiscoverProfile.fromDoc(userDoc);
+  final me = FirebaseAuth.instance.currentUser?.uid;
+  if (me == null) {
+    return;
+  }
+
+  showModalBottomSheet<void>(
+    context: listContext,
+    isScrollControlled: true,
+    useSafeArea: true,
+    useRootNavigator: true,
+    builder: (sheetContext) {
+      var busy = false;
+      return StatefulBuilder(
+        builder: (context, setModalState) {
+          Future<void> runPass() async {
+            if (busy) {
+              return;
+            }
+            setModalState(() => busy = true);
+            try {
+              await LikeMatchService.recordSwipeAndProcessMatch(
+                fromUid: me,
+                toUid: profile.uid,
+                liked: false,
+              );
+              if (sheetContext.mounted) {
+                Navigator.of(sheetContext).pop();
+              }
+            } catch (e) {
+              if (listContext.mounted) {
+                ScaffoldMessenger.of(listContext).showSnackBar(
+                  SnackBar(
+                    content: Text('Could not save pass: $e'),
+                    duration: const Duration(seconds: 6),
+                  ),
+                );
+              }
+            } finally {
+              if (context.mounted) {
+                setModalState(() => busy = false);
+              }
+            }
+          }
+
+          Future<void> runLike() async {
+            if (busy) {
+              return;
+            }
+            setModalState(() => busy = true);
+            try {
+              final result = await LikeMatchService.recordSwipeAndProcessMatch(
+                fromUid: me,
+                toUid: profile.uid,
+                liked: true,
+              );
+              if (!sheetContext.mounted) {
+                return;
+              }
+              Navigator.of(sheetContext).pop();
+              if (result == RecordSwipeResult.newMutualMatch &&
+                  listContext.mounted) {
+                await showItsAMatchDialog(listContext, profile);
+              }
+            } catch (e) {
+              if (listContext.mounted) {
+                ScaffoldMessenger.of(listContext).showSnackBar(
+                  SnackBar(
+                    content: Text('Could not save like: $e'),
+                    duration: const Duration(seconds: 6),
+                  ),
+                );
+              }
+            } finally {
+              if (context.mounted) {
+                setModalState(() => busy = false);
+              }
+            }
+          }
+
+          return SizedBox(
+            height: MediaQuery.sizeOf(sheetContext).height,
+            child: UserProfileDetailSheet(
+              profile: profile,
+              showSwipeActions: true,
+              isActionInProgress: busy,
+              onPass: () => unawaited(runPass()),
+              onLike: () => unawaited(runLike()),
+            ),
+          );
+        },
+      );
+    },
+  );
 }
 
 /// People who have right-swiped you, via `users/{me}/likesReceived/{fromUid}`.
@@ -138,70 +271,65 @@ class _LikerTile extends StatelessWidget {
             }
           }
         }
-        return Material(
-          color: Colors.transparent,
-          child: InkWell(
-            onTap: () {
-              final doc = snap.data;
-              if (doc == null || !doc.exists) {
-                return;
-              }
-              showModalBottomSheet<void>(
-                context: context,
-                isScrollControlled: true,
-                useSafeArea: true,
-                builder: (ctx) {
-                  return SizedBox(
-                    height: MediaQuery.sizeOf(ctx).height,
-                    child: UserProfileDetailSheet(
-                      profile: DiscoverProfile.fromDoc(doc),
-                      showSwipeActions: true,
-                      onPass: () {
-                        Navigator.of(ctx).pop();
-                      },
-                      onLike: () {
-                        Navigator.of(ctx).pop();
-                      },
-                    ),
-                  );
-                },
-              );
-            },
-            borderRadius: BorderRadius.circular(12),
-            child: Card(
-              clipBehavior: Clip.antiAlias,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Expanded(
-                    child: imageUrl != null
-                        ? FirebaseProfileImage(
-                            url: imageUrl,
-                            fit: BoxFit.cover,
-                          )
-                        : ColoredBox(
-                            color: theme.colorScheme.surfaceContainerHighest,
-                            child: Icon(
-                              Icons.person,
-                              size: 56,
-                              color: theme.colorScheme.outline,
-                            ),
-                          ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(8, 8, 8, 10),
-                    child: Text(
-                      label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                      style: theme.textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w600,
+        void openProfile() {
+          // Always fetch on tap: stream can still be [waiting] or the user doc missing.
+          unawaited(_openLikerProfileForUid(context, likerUid));
+        }
+
+        // Stack: Image (and web HtmlElementView) can intercept hits before a parent
+        // InkWell/GestureDetector, so a transparent layer is painted on top of the
+        // image. One outer GestureDetector makes the full card a single target.
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: openProfile,
+          child: Card(
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      Positioned.fill(
+                        child: imageUrl != null
+                            ? FirebaseProfileImage(
+                                url: imageUrl,
+                                fit: BoxFit.cover,
+                              )
+                            : ColoredBox(
+                                color: theme.colorScheme.surfaceContainerHighest,
+                                child: Icon(
+                                  Icons.person,
+                                  size: 56,
+                                  color: theme.colorScheme.outline,
+                                ),
+                              ),
                       ),
+                      // Explicit target above the image (Image / HtmlElementView can block parent gestures).
+                      Positioned.fill(
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.translucent,
+                          onTap: openProfile,
+                          child: const SizedBox.expand(),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 8, 8, 10),
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
         );

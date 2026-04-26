@@ -10,12 +10,15 @@ class UserProfileDetailSheet extends StatelessWidget {
     super.key,
     required this.profile,
     this.showSwipeActions = false,
+    this.isActionInProgress = false,
     this.onPass,
     this.onLike,
   });
 
   final DiscoverProfile profile;
   final bool showSwipeActions;
+  /// When true, pass/like are disabled (e.g. while saving to Firestore).
+  final bool isActionInProgress;
   final VoidCallback? onPass;
   final VoidCallback? onLike;
 
@@ -146,21 +149,32 @@ class UserProfileDetailSheet extends StatelessWidget {
               child: SafeArea(
                 top: false,
                 minimum: const EdgeInsets.fromLTRB(24, 8, 24, 24),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    _ProfileCircleAction(
-                      accent: const Color(0xFFFF3AD4),
-                      icon: Icons.close_rounded,
-                      onPressed: onPass,
-                    ),
-                    _ProfileCircleAction(
-                      accent: const Color(0xFF39FF14),
-                      icon: Icons.favorite_rounded,
-                      onPressed: onLike,
-                    ),
-                  ],
-                ),
+                child: isActionInProgress
+                    ? const Center(
+                        child: Padding(
+                          padding: EdgeInsets.symmetric(vertical: 20),
+                          child: SizedBox(
+                            width: 32,
+                            height: 32,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        ),
+                      )
+                    : Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        children: [
+                          _ProfileCircleAction(
+                            accent: const Color(0xFFFF3AD4),
+                            icon: Icons.close_rounded,
+                            onPressed: onPass,
+                          ),
+                          _ProfileCircleAction(
+                            accent: const Color(0xFF39FF14),
+                            icon: Icons.favorite_rounded,
+                            onPressed: onLike,
+                          ),
+                        ],
+                      ),
               ),
             ),
         ],
