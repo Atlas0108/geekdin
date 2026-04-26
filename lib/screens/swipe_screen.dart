@@ -1,5 +1,4 @@
 import 'dart:async' show unawaited;
-import 'dart:math' as math;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -23,6 +22,10 @@ class _SwipeScreenState extends State<SwipeScreen> {
 
   final CardSwiperController _swiperController = CardSwiperController();
 
+  /// Latched swipe direction while user is dragging:
+  /// -1 = left, 1 = right, null = idle.
+  final ValueNotifier<int?> _activeSwipeDirection = ValueNotifier<int?>(null);
+
   @override
   void initState() {
     super.initState();
@@ -31,6 +34,7 @@ class _SwipeScreenState extends State<SwipeScreen> {
 
   @override
   void dispose() {
+    _activeSwipeDirection.dispose();
     unawaited(_swiperController.dispose());
     super.dispose();
   }
@@ -176,20 +180,43 @@ class _SwipeScreenState extends State<SwipeScreen> {
   }
 
   bool _onSwipe(int previousIndex, int? currentIndex, CardSwiperDirection direction) {
+    _activeSwipeDirection.value = null;
     final liked = direction == CardSwiperDirection.right;
     unawaited(_persistSwipe(previousIndex, liked));
     return true;
   }
 
   // ignore: unused_element_parameter
-  bool _onUndo(int? previousIndex, int currentIndex, CardSwiperDirection direction) =>
-      true;
+  bool _onUndo(int? previousIndex, int currentIndex, CardSwiperDirection direction) {
+    _activeSwipeDirection.value = null;
+    return true;
+  }
 
   Future<void> _onDeckEnd() async {
     if (!mounted) {
       return;
     }
+    _activeSwipeDirection.value = null;
     setState(() => _deck.clear());
+  }
+
+  void _onSwipeDirectionChange(
+    CardSwiperDirection horizontalDirection,
+    CardSwiperDirection verticalDirection,
+  ) {
+    if (horizontalDirection == CardSwiperDirection.none) {
+      if (_activeSwipeDirection.value != null) {
+        _activeSwipeDirection.value = null;
+      }
+      return;
+    }
+    if (_activeSwipeDirection.value == null) {
+      if (horizontalDirection.isCloseTo(CardSwiperDirection.right)) {
+        _activeSwipeDirection.value = 1;
+      } else if (horizontalDirection.isCloseTo(CardSwiperDirection.left)) {
+        _activeSwipeDirection.value = -1;
+      }
+    }
   }
 
   @override
@@ -237,62 +264,94 @@ class _SwipeScreenState extends State<SwipeScreen> {
       );
     }
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final maxW = math.min(constraints.maxWidth - 32, 400.0);
-        final cardHeight = math.min(constraints.maxHeight * 0.62, maxW * 1.35);
-
-        return Column(
-          children: [
-            Expanded(
-              child: CardSwiper(
-                controller: _swiperController,
-                cardsCount: _deck.length,
-                numberOfCardsDisplayed: _deck.length == 1 ? 1 : 2,
-                isLoop: false,
-                allowedSwipeDirection: const AllowedSwipeDirection.symmetric(horizontal: true),
-                onSwipe: _onSwipe,
-                onUndo: _onUndo,
-                onEnd: _onDeckEnd,
-                cardBuilder: (context, index, horizontalPct, _) {
-                  return SizedBox(
-                    width: maxW,
-                    height: cardHeight,
-                    child: _SwiperProfileCard(
-                      profile: _deck[index],
-                      horizontalThresholdPercentage: horizontalPct,
-                    ),
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: CardSwiper(
+            controller: _swiperController,
+            cardsCount: _deck.length,
+            numberOfCardsDisplayed: _deck.length == 1 ? 1 : 2,
+            isLoop: false,
+            padding: EdgeInsets.zero,
+            allowedSwipeDirection:
+                const AllowedSwipeDirection.symmetric(horizontal: true),
+            onSwipe: _onSwipe,
+            onUndo: _onUndo,
+            onEnd: _onDeckEnd,
+            onSwipeDirectionChange: _onSwipeDirectionChange,
+            cardBuilder: (context, index, horizontalPct, _) {
+              return _SwiperProfileCard(
+                profile: _deck[index],
+                horizontalThresholdPercentage: horizontalPct,
+              );
+            },
+          ),
+        ),
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          height: 260,
+          child: IgnorePointer(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.transparent,
+                    Colors.black.withValues(alpha: 0.85),
+                  ],
+                  stops: const [0.0, 1.0],
+                ),
+              ),
+            ),
+          ),
+        ),
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          child: SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+              child: ValueListenableBuilder<int?>(
+                valueListenable: _activeSwipeDirection,
+                builder: (context, direction, _) {
+                  final hidePass = direction == 1;
+                  final hideLike = direction == -1;
+                  return Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      _ScaleVisibility(
+                        visible: !hidePass,
+                        child: _CircleAction(
+                          accent: const Color(0xFFFF3AD4),
+                          icon: Icons.close_rounded,
+                          onPressed: _deck.isEmpty
+                              ? null
+                              : () => _swiperController.swipe(CardSwiperDirection.left),
+                        ),
+                      ),
+                      _ScaleVisibility(
+                        visible: !hideLike,
+                        child: _CircleAction(
+                          accent: const Color(0xFF39FF14),
+                          icon: Icons.favorite_rounded,
+                          onPressed: _deck.isEmpty
+                              ? null
+                              : () => _swiperController.swipe(CardSwiperDirection.right),
+                        ),
+                      ),
+                    ],
                   );
                 },
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  _NeonCircleAction(
-                    accent: const Color(0xFFFF3AD4),
-                    icon: Icons.close_rounded,
-                    label: 'Pass',
-                    onPressed: _deck.isEmpty
-                        ? null
-                        : () => _swiperController.swipe(CardSwiperDirection.left),
-                  ),
-                  _NeonCircleAction(
-                    accent: const Color(0xFF39FF14),
-                    icon: Icons.favorite_rounded,
-                    label: 'Like',
-                    onPressed: _deck.isEmpty
-                        ? null
-                        : () => _swiperController.swipe(CardSwiperDirection.right),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        );
-      },
+          ),
+        ),
+      ],
     );
   }
 }
@@ -470,7 +529,7 @@ class _ProfileCardFrame extends StatelessWidget {
                   ),
                 ),
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 32, 16, 20),
+                  padding: const EdgeInsets.fromLTRB(20, 40, 20, 140),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
@@ -489,7 +548,7 @@ class _ProfileCardFrame extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: theme.textTheme.bodyMedium?.copyWith(
-                            color: Colors.white.withValues(alpha: 0.9),
+                            color: Colors.white,
                           ),
                         ),
                       ],
@@ -500,7 +559,7 @@ class _ProfileCardFrame extends StatelessWidget {
                           maxLines: 3,
                           overflow: TextOverflow.ellipsis,
                           style: theme.textTheme.bodyMedium?.copyWith(
-                            color: Colors.white.withValues(alpha: 0.92),
+                            color: Colors.white,
                           ),
                         ),
                       ],
@@ -516,69 +575,57 @@ class _ProfileCardFrame extends StatelessWidget {
   }
 }
 
-class _NeonCircleAction extends StatelessWidget {
-  const _NeonCircleAction({
+class _CircleAction extends StatelessWidget {
+  const _CircleAction({
     required this.accent,
     required this.icon,
-    required this.label,
     required this.onPressed,
   });
 
   final Color accent;
   final IconData icon;
-  final String label;
   final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final enabled = onPressed != null;
-    final isDark = theme.brightness == Brightness.dark;
-    final labelColor = enabled ? accent : theme.colorScheme.onSurfaceVariant;
 
-    final button = DecoratedBox(
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: enabled
-            ? theme.colorScheme.surfaceContainerHighest.withValues(alpha: isDark ? 0.5 : 0.75)
-            : theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
-        border: Border.all(
-          color: accent.withValues(alpha: enabled ? 1 : 0.3),
-          width: 2,
+    return Material(
+      color: enabled ? accent : accent.withValues(alpha: 0.4),
+      shape: const CircleBorder(),
+      elevation: enabled ? 6 : 0,
+      shadowColor: Colors.black.withValues(alpha: 0.4),
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: onPressed,
+        child: SizedBox(
+          width: 72,
+          height: 72,
+          child: Icon(icon, size: 36, color: Colors.white),
         ),
       ),
-      child: Material(
-        type: MaterialType.transparency,
-        color: Colors.transparent,
-        child: InkWell(
-          customBorder: const CircleBorder(),
-          splashColor: accent.withValues(alpha: 0.2),
-          onTap: onPressed,
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Icon(icon, size: 36, color: enabled ? accent : accent.withValues(alpha: 0.35)),
-          ),
-        ),
-      ),
-    );
-
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (enabled)
-          button
-        else
-          Opacity(opacity: 0.45, child: button),
-        const SizedBox(height: 8),
-        Text(
-          label,
-          style: theme.textTheme.labelMedium?.copyWith(
-            color: labelColor,
-            fontWeight: FontWeight.w600,
-            letterSpacing: 0.4,
-          ),
-        ),
-      ],
     );
   }
 }
+
+class _ScaleVisibility extends StatelessWidget {
+  const _ScaleVisibility({required this.visible, required this.child});
+
+  final bool visible;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedScale(
+      scale: visible ? 1.0 : 0.0,
+      duration: const Duration(milliseconds: 180),
+      curve: visible ? Curves.easeOutBack : Curves.easeIn,
+      child: AnimatedOpacity(
+        opacity: visible ? 1.0 : 0.0,
+        duration: const Duration(milliseconds: 140),
+        child: child,
+      ),
+    );
+  }
+}
+

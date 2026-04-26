@@ -22,17 +22,20 @@ class _MainShellScreenState extends State<MainShellScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isSwipe = _index == 0;
     return Scaffold(
-      appBar: AppBar(
-        title: Text(_titles[_index]),
-        actions: [
-          IconButton(
-            tooltip: 'Sign out',
-            onPressed: () => FirebaseAuth.instance.signOut(),
-            icon: const Icon(Icons.logout),
-          ),
-        ],
-      ),
+      appBar: isSwipe
+          ? null
+          : AppBar(
+              title: Text(_titles[_index]),
+              actions: [
+                IconButton(
+                  tooltip: 'Sign out',
+                  onPressed: () => FirebaseAuth.instance.signOut(),
+                  icon: const Icon(Icons.logout),
+                ),
+              ],
+            ),
       body: IndexedStack(
         index: _index,
         children: const [
