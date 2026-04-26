@@ -41,11 +41,27 @@ service cloud.firestore {
 
       // Chat thread metadata per match (last preview, for Messages list). Either participant
       // can write the doc under the other person so both inboxes update when someone sends.
+      // Messages for a 1:1 live under the canonical `users/{minUid}/chats/{maxUid}/messages`
+      // path (min/max of the two uids) — [ChatMessageService] writes there.
       match /chats/{otherUserId} {
         allow read: if request.auth != null && request.auth.uid == userId;
         allow create, update, delete: if request.auth != null
             && (request.auth.uid == userId
                 || request.auth.uid == otherUserId);
+
+        match /messages/{messageId} {
+          allow read: if request.auth != null
+              && (request.auth.uid == userId
+                  || request.auth.uid == otherUserId);
+          allow create: if request.auth != null
+              && (request.auth.uid == userId
+                  || request.auth.uid == otherUserId)
+              && request.resource.data.senderId == request.auth.uid
+              && request.resource.data.text is string
+              && request.resource.data.text.size() > 0
+              && request.resource.data.text.size() <= 4000;
+          allow update, delete: if false;
+        }
       }
     }
   }

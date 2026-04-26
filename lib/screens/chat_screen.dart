@@ -2,9 +2,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
-import '../models/discover_profile.dart';
 import '../widgets/firebase_profile_image.dart';
-import '../widgets/user_profile_detail_sheet.dart';
+import 'chat_thread_screen.dart';
 
 /// Chat hub: "New matches" (horizontal) for mutual matches with no [chats] thread yet;
 /// "Messages" (list) for matches that have [users/{me}/chats/{otherUid}] with history.
@@ -271,25 +270,7 @@ class _NewMatchCard extends StatelessWidget {
         return GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: () {
-            final doc = snap.data;
-            if (doc == null || !doc.exists) {
-              return;
-            }
-            showModalBottomSheet<void>(
-              context: context,
-              isScrollControlled: true,
-              useSafeArea: true,
-              backgroundColor: ChatScreen._bg,
-              builder: (ctx) {
-                return SizedBox(
-                  height: MediaQuery.sizeOf(ctx).height,
-                  child: UserProfileDetailSheet(
-                    profile: DiscoverProfile.fromDoc(doc),
-                    showSwipeActions: false,
-                  ),
-                );
-              },
-            );
+            ChatThreadScreen.open(context, otherUid);
           },
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -376,12 +357,7 @@ class _MessageThreadTile extends StatelessWidget {
           }
         }
         return InkWell(
-          onTap: () {
-            // Placeholder until chat room exists
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Chat is coming soon.')),
-            );
-          },
+          onTap: () => ChatThreadScreen.open(context, otherUid),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             child: Row(
